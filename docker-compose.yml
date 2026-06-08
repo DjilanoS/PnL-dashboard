@@ -3,11 +3,14 @@
 #   docker compose up --build
 #     Frontend → http://localhost:5173      API → http://localhost:3000
 #
-# Secrets are optional — the stack boots without them. To set them, create a
-# root `.env` (gitignored); compose substitutes the ${VAR} values below:
+# Secrets are optional — the stack boots without them. To set them, copy
+# apps/backend/.env.example to apps/backend/.env (gitignored) and fill in:
 #   HELIUS_API_KEY=...            # better Solana RPC limits
 #   DISCORD_CLIENT_ID=...         # required for "Sign in with Discord"
 #   DISCORD_CLIENT_SECRET=...     # (register redirect http://localhost:3000/auth/discord/callback)
+# The backend reads that file via env_file at container start — edit it and
+# `docker compose up -d` (no rebuild) to apply. MONGODB_URI is pinned to the
+# compose `mongo` service below and is NOT read from that file.
 #
 # NODE_ENV defaults to `development` so it runs against localhost out of the box.
 # For a real deployment set NODE_ENV=production AND provide Discord creds with
@@ -39,21 +42,17 @@ services:
         condition: service_healthy
     ports:
       - "3000:3000"
+    # App config + secrets come from apps/backend/.env (optional — the env schema
+    # in src/config/env.ts supplies dev defaults, so the stack still boots without
+    # it). Keys set under `environment:` below override the file.
+    env_file:
+      - path: ./apps/backend/.env
+        required: false
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
+      # Compose-managed infra. MONGODB_URI must target the internal `mongo`
+      # service (not localhost/Atlas), so it lives here, not in the shared .env.
       PORT: "3000"
       MONGODB_URI: mongodb://mongo:27017/pnl
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173}
-      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
-      CRON_SECRET: ${CRON_SECRET:-dev-cron-secret}
-      HELIUS_API_KEY: ${HELIUS_API_KEY:-}
-      SOLANA_RPC_URL: ${SOLANA_RPC_URL:-}
-      SUI_RPC_URL: ${SUI_RPC_URL:-}
-      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
-      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
-      DISCORD_CALLBACK_URL: ${DISCORD_CALLBACK_URL:-http://localhost:3000/auth/discord/callback}
-      FRONTEND_AUTH_CALLBACK: ${FRONTEND_AUTH_CALLBACK:-http://localhost:5173/auth/callback}
     healthcheck:
       test:
         - CMD
