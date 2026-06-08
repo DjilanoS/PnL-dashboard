@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { onMounted, onUnmounted } from 'vue';
 import { Coins, LineChart, PieChart, Wallet } from '@lucide/vue';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import PnlCards from '@/components/PnlCards.vue';
@@ -11,7 +11,15 @@ import { fmtUsd } from '@/lib/format';
 
 const { holdings, pnl, nav, fetchAll } = usePortfolio();
 
-onMounted(() => fetchAll());
+const REFRESH_INTERVAL_MS = 60_000;
+let refreshTimer: ReturnType<typeof setInterval> | undefined;
+
+onMounted(() => {
+  fetchAll();
+  refreshTimer = setInterval(fetchAll, REFRESH_INTERVAL_MS);
+});
+
+onUnmounted(() => clearInterval(refreshTimer));
 </script>
 
 <template>
