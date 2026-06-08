@@ -1,0 +1,20 @@
+{
+  "name": "pnl-dashboard",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.6",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "bun --filter @pnl/frontend dev",
+    "dev:api": "bun --filter @pnl/backend dev",
+    "build": "bun --filter './packages/*' build && bun --filter './apps/*' build",
+    "typecheck": "bun --filter '*' typecheck"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

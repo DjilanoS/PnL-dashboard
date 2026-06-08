@@ -1,0 +1,33 @@
+# Keep build contexts small and free of secrets/artifacts.
+**/node_modules
+node_modules
+
+# build outputs
+**/dist
+dist
+dist-ssr
+build
+**/*.tsbuildinfo
+*.tsbuildinfo
+
+# local env / secrets (the stack is configured via compose + a root .env)
+**/.env
+**/.env.*
+.env
+.env.*
+!**/.env.example
+!.env.example
+
+# vcs / editor / os
+.git
+.gitignore
+.vercel
+**/.vercel
+.idea
+.vscode
+.DS_Store
+**/*.log
+
+# misc repo files not needed inside images
+plans
+DEPLOY.md
