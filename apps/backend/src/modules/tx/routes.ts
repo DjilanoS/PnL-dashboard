@@ -1,12 +1,21 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { Type } from '@sinclair/typebox';
 import mongoose from 'mongoose';
-import type { Chain, ParsedOrderPreview } from '@pnl/types';
+import { tokenKey, type Chain, type OwnedAsset, type ParsedOrderPreview, type TokenRef } from '@pnl/types';
 import { Order, toOrderDTO } from '../../models/Order';
+import { Wallet } from '../../models/Wallet';
 import { getUserRpc } from '../../models/User';
-import { ChainSchema, ErrorSchema, OrderDtoSchema, ParsedPreviewSchema } from '../../schemas';
-import { parseSolanaSignature, scanSolana } from '../../services/solanaParser';
-import { parseSuiDigest, scanSui } from '../../services/suiParser';
+import {
+  AssetsScanResponseSchema,
+  ChainSchema,
+  ErrorSchema,
+  OrderDtoSchema,
+  ParsedPreviewSchema,
+  TokenLookupResponseSchema,
+} from '../../schemas';
+import { getSolanaAsset, getSolanaAssetsByOwner, parseSolanaSignature, scanSolana } from '../../services/solanaParser';
+import { getSuiAssetsByOwner, getSuiCoinMeta, parseSuiDigest, scanSui } from '../../services/suiParser';
+import { getCurrentPriceForToken, getCurrentPricesForTokens } from '../../services/prices';
 import { configWithUserRpc, type AppConfig } from '../../config/env';
 
 const txRoutes: FastifyPluginAsyncTypebox = async (app) => {
@@ -81,6 +90,106 @@ const txRoutes: FastifyPluginAsyncTypebox = async (app) => {
     },
   );
 
+  // Fetch the tokens the user holds across ALL their tracked wallets on a chain
+  // (Solana via Helius DAS getAssetsByOwner; Sui via getAllBalances + metadata).
+  app.post(
+    '/assets',
+    {
+      schema: {
+        body: Type.Object({ chain: ChainSchema }),
+        response: { 200: AssetsScanResponseSchema, 400: ErrorSchema, 502: ErrorSchema },
+      },
+    },
+    async (req, reply) => {
+      const { chain } = req.body;
+      const userId = new mongoose.Types.ObjectId(req.user.sub);
+      const wallets = await Wallet.find({ userId, chain });
+      if (wallets.length === 0) {
+        return reply
+          .code(400)
+          .send({ error: `Add a ${chain.toUpperCase()} wallet first to scan your tokens` });
+      }
+
+      const cfg = await cfgFor(req.user.sub);
+      const fetchOne = chain === 'sol' ? getSolanaAssetsByOwner : getSuiAssetsByOwner;
+      let firstError: string | null = null;
+      const perWallet = await Promise.all(
+        wallets.map((w) =>
+          fetchOne(cfg, w.address).catch((e: unknown) => {
+            if (!firstError) firstError = e instanceof Error ? e.message : String(e);
+            return [] as OwnedAsset[];
+          }),
+        ),
+      );
+
+      // Merge/dedupe by address, summing balances across wallets.
+      const merged = new Map<string, OwnedAsset>();
+      for (const assets of perWallet) {
+        for (const a of assets) {
+          const existing = merged.get(a.address);
+          if (existing) {
+            existing.balance += a.balance;
+            existing.image = existing.image ?? a.image;
+            existing.name = existing.name ?? a.name;
+            existing.priceUsd = existing.priceUsd ?? a.priceUsd;
+          } else {
+            merged.set(a.address, { ...a });
+          }
+        }
+      }
+
+      // Surface a real upstream failure instead of a misleading "no tokens found".
+      const failure: string | null = firstError;
+      if (merged.size === 0 && failure) {
+        return reply.code(502).send({ error: failure });
+      }
+
+      // Fill missing prices via DefiLlama (all Sui tokens; SOL tokens DAS didn't price).
+      const need: TokenRef[] = [...merged.values()]
+        .filter((a) => a.priceUsd == null)
+        .map((a) => ({ chain: a.chain, address: a.address }));
+      if (need.length > 0) {
+        const prices = await getCurrentPricesForTokens(need);
+        for (const a of merged.values()) {
+          if (a.priceUsd == null) a.priceUsd = prices[tokenKey(a.chain, a.address)] ?? null;
+        }
+      }
+
+      const assets = [...merged.values()].sort(
+        (x, y) => y.balance * (y.priceUsd ?? 0) - x.balance * (x.priceUsd ?? 0),
+      );
+      return { assets };
+    },
+  );
+
+  // Look up one token's metadata by address (Solana via DAS getAsset; Sui via getCoinMetadata).
+  app.post(
+    '/token',
+    {
+      schema: {
+        body: Type.Object({ chain: ChainSchema, address: Type.String({ minLength: 1 }) }),
+        response: { 200: TokenLookupResponseSchema, 422: ErrorSchema },
+      },
+    },
+    async (req, reply) => {
+      const { chain } = req.body;
+      const address = req.body.address.trim();
+      const cfg = await cfgFor(req.user.sub);
+
+      if (chain === 'sol') {
+        const found = await getSolanaAsset(cfg, address);
+        if (!found) return reply.code(422).send({ error: 'Token not found' });
+        const priceUsd = found.priceUsd ?? (await getCurrentPriceForToken('sol', found.token.address));
+        return { token: found.token, priceUsd };
+      }
+
+      const token = await getSuiCoinMeta(cfg, address);
+      if (!token) return reply.code(422).send({ error: 'Token not found' });
+      const priceUsd = await getCurrentPriceForToken('sui', token.address);
+      return { token, priceUsd };
+    },
+  );
+
   // Import a parsed trade into the ledger (idempotent on txSignature).
   app.post(
     '/import',
@@ -111,7 +220,11 @@ const txRoutes: FastifyPluginAsyncTypebox = async (app) => {
         const doc = await Order.create({
           userId,
           chain: preview.chain,
+          address: preview.address,
           asset: preview.asset,
+          decimals: preview.decimals,
+          tokenName: preview.name,
+          tokenImage: preview.image,
           side: preview.side,
           amount: preview.amount,
           priceUsd: preview.priceUsd,

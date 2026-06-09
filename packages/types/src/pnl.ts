@@ -1,8 +1,18 @@
-import type { Asset } from './order';
+import type { Asset, Chain } from './order';
 
-/** Per-asset PnL, derived by replaying the order ledger (weighted-average cost). */
+/** Per-token PnL, derived by replaying the order ledger (weighted-average cost). */
 export interface AssetPnl {
+  chain: Chain;
+  /** Token address (SPL mint / Sui coin type). */
+  address: string;
+  /** Display ticker. */
   asset: Asset;
+  /** Token full name, if known. */
+  name?: string;
+  /** Token logo URL, if known. */
+  image?: string;
+  /** On-chain decimals. */
+  decimals: number;
   /** Coins currently held (sum of buys minus sells). */
   held: number;
   /** Weighted-average cost per coin (incl. fees/gas on buys). */

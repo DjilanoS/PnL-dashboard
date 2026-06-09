@@ -12,7 +12,7 @@ import {
   type LineData,
   type Time,
 } from 'lightweight-charts';
-import type { Asset, NavPoint } from '@pnl/types';
+import type { Chain, NavPoint } from '@pnl/types';
 import { useTheme } from '@/composables/useTheme';
 import { fmtUsd } from '@/lib/format';
 
@@ -79,10 +79,11 @@ function totalData(points: NavPoint[]): AreaData<Time>[] {
   return points.map((p) => ({ time: p.date as Time, value: p.totalValueUsd }));
 }
 
-function chainData(points: NavPoint[], asset: Asset): LineData<Time>[] {
+// Sum every token on a chain so custom tokens are included, not just the native coin.
+function chainData(points: NavPoint[], chain: Chain): LineData<Time>[] {
   return points.map((p) => ({
     time: p.date as Time,
-    value: p.breakdown.find((b) => b.asset === asset)?.valueUsd ?? 0,
+    value: p.breakdown.filter((b) => b.chain === chain).reduce((s, b) => s + b.valueUsd, 0),
   }));
 }
 
@@ -131,8 +132,8 @@ onMounted(() => {
   sol = chart.addSeries(LineSeries, { lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
   sui = chart.addSeries(LineSeries, { lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
   total.setData(totalData(props.points));
-  sol.setData(chainData(props.points, 'SOL'));
-  sui.setData(chainData(props.points, 'SUI'));
+  sol.setData(chainData(props.points, 'sol'));
+  sui.setData(chainData(props.points, 'sui'));
   applyTheme();
   chart.timeScale().fitContent();
 
@@ -189,8 +190,8 @@ watch(
   () => props.points,
   (pts) => {
     total?.setData(totalData(pts));
-    sol?.setData(chainData(pts, 'SOL'));
-    sui?.setData(chainData(pts, 'SUI'));
+    sol?.setData(chainData(pts, 'sol'));
+    sui?.setData(chainData(pts, 'sui'));
     chart?.timeScale().fitContent();
   },
 );

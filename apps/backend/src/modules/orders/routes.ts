@@ -1,6 +1,7 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { Type } from '@sinclair/typebox';
 import mongoose from 'mongoose';
+import { nativeTokenAddress } from '@pnl/types';
 import { Order, toOrderDTO } from '../../models/Order';
 import { ErrorSchema, ManualOrderSchema, OrderDtoSchema } from '../../schemas';
 
@@ -20,7 +21,11 @@ const orderRoutes: FastifyPluginAsyncTypebox = async (app) => {
     const doc = await Order.create({
       userId: new mongoose.Types.ObjectId(req.user.sub),
       chain: b.chain,
+      address: b.address?.trim() || nativeTokenAddress(b.chain),
       asset: b.asset,
+      decimals: b.decimals ?? 9,
+      tokenName: b.name,
+      tokenImage: b.image,
       side: b.side,
       amount: b.amount,
       priceUsd: b.priceUsd,

@@ -1,12 +1,14 @@
 import mongoose, { Schema, type Model, type InferSchemaType } from 'mongoose';
 
-/** Current-price cache; rows auto-expire ~60s after fetch (TTL index). */
+/** Current-price cache, keyed per token; rows auto-expire ~60s after fetch. */
 const priceCacheSchema = new Schema({
-  asset: { type: String, enum: ['SOL', 'SUI'], required: true, unique: true },
+  chain: { type: String, enum: ['sol', 'sui'], required: true },
+  address: { type: String, required: true },
   priceUsd: { type: Number, required: true },
   fetchedAt: { type: Date, required: true },
 });
 
+priceCacheSchema.index({ chain: 1, address: 1 }, { unique: true });
 priceCacheSchema.index({ fetchedAt: 1 }, { expireAfterSeconds: 60 });
 
 export type PriceCacheDoc = InferSchemaType<typeof priceCacheSchema>;
@@ -15,14 +17,15 @@ export const PriceCache: Model<PriceCacheDoc> =
   (mongoose.models.PriceCache as Model<PriceCacheDoc>) ??
   mongoose.model('PriceCache', priceCacheSchema);
 
-/** Historical daily prices — immutable, cached forever (no TTL). */
+/** Historical daily prices per token — immutable, cached forever (no TTL). */
 const historicalPriceSchema = new Schema({
-  asset: { type: String, enum: ['SOL', 'SUI'], required: true },
+  chain: { type: String, enum: ['sol', 'sui'], required: true },
+  address: { type: String, required: true },
   dayTs: { type: Number, required: true }, // unix seconds at UTC day start
   priceUsd: { type: Number, required: true },
 });
 
-historicalPriceSchema.index({ asset: 1, dayTs: 1 }, { unique: true });
+historicalPriceSchema.index({ chain: 1, address: 1, dayTs: 1 }, { unique: true });
 
 export type HistoricalPriceDoc = InferSchemaType<typeof historicalPriceSchema>;
 

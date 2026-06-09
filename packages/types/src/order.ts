@@ -1,8 +1,13 @@
-/** The two chains / native assets this dashboard tracks. */
+/** The two chains this dashboard tracks. */
 export type Chain = 'sol' | 'sui';
 
-/** Tracked native asset. Maps 1:1 with {@link Chain}. */
-export type Asset = 'SOL' | 'SUI';
+/**
+ * A token's display ticker, e.g. "SOL", "SUI", "JUP", "USDC". Previously a
+ * `'SOL' | 'SUI'` union; now any token symbol. The narrow native literals are
+ * still valid `Asset`s, so existing call sites that pass `'SOL'`/`'SUI'` keep
+ * working. A token's *identity* is `(chain, address)` (see {@link TokenRef}).
+ */
+export type Asset = string;
 
 /** Whether the tracked asset was acquired (buy) or disposed (sell). */
 export type OrderSide = 'buy' | 'sell';
@@ -21,9 +26,18 @@ export interface QuoteLeg {
 /** Fields shared by manual input, parsed previews, and persisted orders. */
 export interface OrderCore {
   chain: Chain;
+  /** Token address (SPL mint / Sui coin type). Native coins use canonical addresses. */
+  address: string;
+  /** Display ticker (denormalized), e.g. "SOL", "JUP". */
   asset: Asset;
+  /** On-chain decimals of the token. */
+  decimals: number;
+  /** Token full name, if known (denormalized). */
+  name?: string;
+  /** Token logo URL, if known (denormalized). */
+  image?: string;
   side: OrderSide;
-  /** Quantity of the tracked asset (SOL/SUI), in whole coins. */
+  /** Quantity of the token, in whole coins (UI amount, not raw). */
   amount: number;
   /** Executed USD price per coin at trade time. */
   priceUsd: number;

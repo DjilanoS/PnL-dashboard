@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import type { Asset, Holding } from '@pnl/types';
+import type { Chain, Holding } from '@pnl/types';
 import TokenIcon from '@/components/icons/TokenIcon.vue';
 import { cn } from '@/lib/utils';
 import { fmtUsd } from '@/lib/format';
 
 const props = defineProps<{ holdings: Holding[] }>();
 
-const COLOR: Record<string, string> = { SOL: 'var(--solana)', SUI: 'var(--sui)' };
+// Arbitrary tokens have no brand variable, so segments are colored by chain.
+const CHAIN_COLOR: Record<Chain, string> = { sol: 'var(--solana)', sui: 'var(--sui)' };
 // r chosen so the circumference ≈ 100 → dash lengths map directly to percentages.
 const RADIUS = 15.91549430918954;
 
-const hovered = ref<Asset | null>(null);
+// Hovered token, keyed by `${chain}:${address}`.
+const hovered = ref<string | null>(null);
 
 const segments = computed(() => {
   const items = props.holdings.filter((h) => h.valueUsd > 0);
@@ -23,16 +25,26 @@ const segments = computed(() => {
     // +25 rotates the start to 12 o'clock, going clockwise (matches a conic gradient).
     const offset = 100 - acc + 25;
     acc += len;
-    return { asset: h.asset, value: h.valueUsd, pct, len, offset };
+    return {
+      key: `${h.chain}:${h.address}`,
+      chain: h.chain,
+      symbol: h.asset,
+      image: h.image,
+      color: CHAIN_COLOR[h.chain],
+      value: h.valueUsd,
+      pct,
+      len,
+      offset,
+    };
   });
   return { total, arcs };
 });
 
-// Center label/value: the hovered asset, or the portfolio total when nothing is hovered.
+// Center label/value: the hovered token, or the portfolio total when nothing is hovered.
 const center = computed(() => {
-  const h = hovered.value;
-  if (!h) return { label: 'Total', value: segments.value.total };
-  return { label: h, value: segments.value.arcs.find((a) => a.asset === h)?.value ?? 0 };
+  const seg = hovered.value ? segments.value.arcs.find((a) => a.key === hovered.value) : null;
+  if (!seg) return { label: 'Total', chain: undefined, image: undefined, value: segments.value.total };
+  return { label: seg.symbol, chain: seg.chain, image: seg.image, value: seg.value };
 });
 </script>
 
@@ -42,20 +54,20 @@ const center = computed(() => {
       <svg viewBox="0 0 42 42" class="size-40">
         <circle
           v-for="seg in segments.arcs"
-          :key="seg.asset"
+          :key="seg.key"
           cx="21"
           cy="21"
           :r="RADIUS"
           fill="none"
-          :stroke="COLOR[seg.asset]"
-          :stroke-width="hovered === seg.asset ? 5 : 4"
+          :stroke="seg.color"
+          :stroke-width="hovered === seg.key ? 5 : 4"
           :stroke-dasharray="`${seg.len} ${100 - seg.len}`"
           :stroke-dashoffset="seg.offset"
           :class="cn(
             'cursor-pointer transition-all duration-150',
-            hovered && hovered !== seg.asset && 'opacity-30',
+            hovered && hovered !== seg.key && 'opacity-30',
           )"
-          @mouseenter="hovered = seg.asset"
+          @mouseenter="hovered = seg.key"
           @mouseleave="hovered = null"
         />
       </svg>
@@ -63,7 +75,7 @@ const center = computed(() => {
       <div class="pointer-events-none absolute inset-0 grid place-items-center">
         <div class="text-center">
           <div class="flex items-center justify-center gap-1 text-xs text-muted-foreground">
-            <TokenIcon v-if="hovered" :asset="hovered" class="size-3" />
+            <TokenIcon v-if="center.chain" :chain="center.chain" :image="center.image" class="size-3" />
             {{ center.label }}
           </div>
           <div class="text-sm font-semibold tabular-nums">{{ fmtUsd(center.value) }}</div>
@@ -73,13 +85,13 @@ const center = computed(() => {
     <div class="flex flex-wrap justify-center gap-2 text-sm">
       <div
         v-for="s in segments.arcs"
-        :key="s.asset"
+        :key="s.key"
         class="flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 transition-colors hover:bg-accent"
-        @mouseenter="hovered = s.asset"
+        @mouseenter="hovered = s.key"
         @mouseleave="hovered = null"
       >
-        <TokenIcon :asset="s.asset" class="size-3.5" />
-        <span :class="s.asset === 'SOL' ? 'text-solana' : 'text-sui'">{{ s.asset }}</span>
+        <TokenIcon :chain="s.chain" :image="s.image" class="size-3.5" />
+        <span :class="s.chain === 'sol' ? 'text-solana' : 'text-sui'">{{ s.symbol }}</span>
         <span class="text-muted-foreground">{{ (s.pct * 100).toFixed(1) }}%</span>
       </div>
     </div>

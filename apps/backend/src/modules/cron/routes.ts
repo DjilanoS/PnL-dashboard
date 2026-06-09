@@ -1,13 +1,11 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { Type } from '@sinclair/typebox';
-import type { Asset } from '@pnl/types';
+import { tokenKey, type Chain } from '@pnl/types';
 import { Order, toOrderDTO } from '../../models/Order';
 import { HoldingSnapshot } from '../../models/HoldingSnapshot';
 import { getCurrentPricesCached } from '../../services/prices';
 import { ErrorSchema } from '../../schemas';
 import type { AppConfig } from '../../config/env';
-
-const ASSETS: Asset[] = ['SOL', 'SUI'];
 
 /**
  * Daily NAV snapshot. Secured by CRON_SECRET (Vercel Cron sends it as a Bearer
@@ -33,20 +31,33 @@ const cronRoutes: FastifyPluginAsyncTypebox = async (app) => {
         return reply.code(401).send({ error: 'unauthorized' });
       }
 
-      const prices = await getCurrentPricesCached();
       const userIds = await Order.distinct('userId');
       const date = new Date().toISOString().slice(0, 10);
 
       for (const userId of userIds) {
         const docs = await Order.find({ userId }).sort({ timestamp: 1 });
-        const held: Record<Asset, number> = { SOL: 0, SUI: 0 };
+        // Accumulate held quantity per token (display symbol: latest wins).
+        const held = new Map<string, { chain: Chain; address: string; asset: string; qty: number }>();
         for (const d of docs) {
           const o = toOrderDTO(d);
-          held[o.asset] += o.side === 'buy' ? o.amount : -o.amount;
+          const key = tokenKey(o.chain, o.address);
+          const delta = o.side === 'buy' ? o.amount : -o.amount;
+          const cur = held.get(key);
+          if (cur) {
+            cur.qty += delta;
+            cur.asset = o.asset;
+          } else {
+            held.set(key, { chain: o.chain, address: o.address, asset: o.asset, qty: delta });
+          }
         }
-        const breakdown = ASSETS.filter((a) => held[a] > 1e-9).map((a) => ({
-          asset: a,
-          valueUsd: held[a] * (prices[a] ?? 0),
+
+        const active = [...held.values()].filter((h) => h.qty > 1e-9);
+        const prices = await getCurrentPricesCached(
+          active.map((h) => ({ chain: h.chain, address: h.address })),
+        );
+        const breakdown = active.map((h) => ({
+          asset: h.asset,
+          valueUsd: h.qty * (prices[tokenKey(h.chain, h.address)] ?? 0),
         }));
         const totalValueUsd = breakdown.reduce((s, b) => s + b.valueUsd, 0);
         await HoldingSnapshot.updateOne({ userId, date }, { userId, date, totalValueUsd, breakdown }, { upsert: true });

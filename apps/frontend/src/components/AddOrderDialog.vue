@@ -3,7 +3,15 @@ import { computed, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import { toast } from 'vue-sonner';
 import { Check, Loader2, Search } from '@lucide/vue';
-import type { Asset, Chain, OrderSide, ParsedOrderPreview, WalletDTO } from '@pnl/types';
+import {
+  nativeTokenAddress,
+  type Chain,
+  type OrderSide,
+  type OwnedAsset,
+  type ParsedOrderPreview,
+  type TokenMeta,
+  type WalletDTO,
+} from '@pnl/types';
 import {
   Dialog,
   DialogContent,
@@ -33,24 +41,38 @@ const wallets = useWallets();
 // Sentinel option that reveals a free-text input for scanning any address.
 const OTHER = '__other__';
 
+/** Canonical native token for a chain (the Manual tab's default token). */
+function nativeMeta(chain: Chain): TokenMeta {
+  return {
+    chain,
+    address: nativeTokenAddress(chain),
+    symbol: chain === 'sol' ? 'SOL' : 'SUI',
+    name: chain === 'sol' ? 'Solana' : 'Sui',
+    decimals: 9,
+  };
+}
+
 // --- Manual ---
-const asset = ref<Asset>('SOL');
+const chainManual = ref<Chain>('sol');
+const manualToken = ref<TokenMeta | null>(null); // null → use the chain's native coin
+const tokenAddrInput = ref('');
 const side = ref<OrderSide>('buy');
 const amount = ref('');
 const price = ref('');
 const fee = ref('0');
 const date = ref(nowLocalDatetime());
 const submitting = ref(false);
+const manualTokenEffective = computed(() => manualToken.value ?? nativeMeta(chainManual.value));
 const total = computed(() => {
   const a = parseFloat(amount.value);
   const p = parseFloat(price.value);
   return Number.isFinite(a) && Number.isFinite(p) ? a * p : 0;
 });
 
-// --- Scan / Link shared chain ---
+// --- Scan / Swaps / Link shared chain ---
 const chainTx = ref<Chain>('sol');
 
-// Your wallets for the chosen chain (drives the scan/link selects).
+// Your wallets for the chosen chain (drives the swaps/link selects).
 const chainWallets = computed<WalletDTO[]>(() => wallets.byChain(chainTx.value));
 
 function walletLabel(w: WalletDTO): string {
@@ -58,7 +80,17 @@ function walletLabel(w: WalletDTO): string {
   return w.label ? `${w.label} (${short})` : short;
 }
 
-// --- Scan ---
+// --- Scan assets (fetch held tokens, pre-fill an order) ---
+const ownedAssets = ref<OwnedAsset[]>([]);
+const assetsFetched = ref(false);
+const selectedAsset = ref<OwnedAsset | null>(null);
+const assetSide = ref<OrderSide>('buy');
+const assetAmount = ref('');
+const assetPrice = ref('');
+const assetDate = ref(nowLocalDatetime());
+const assetFee = ref('0');
+
+// --- Swaps (recent swap transactions) ---
 const candidates = ref<ParsedOrderPreview[]>([]);
 const selected = ref<string[]>([]);
 const scanned = ref(false);
@@ -79,7 +111,7 @@ const linkAddress = computed(() =>
 );
 const preview = ref<ParsedOrderPreview | null>(null);
 
-// Keep the scan selection valid as wallets load or the chain changes: default
+// Keep the swap-scan selection valid as wallets load or the chain changes: default
 // to the first wallet for the chain, or the "Other address" escape hatch.
 watch(
   [chainWallets, open],
@@ -93,20 +125,34 @@ watch(
   { immediate: true },
 );
 
-// Switching chains clears the (optional) link address selection.
+// Switching the shared chain clears chain-specific selections + scanned results.
 watch(chainTx, () => {
   linkSelection.value = '';
   linkOther.value = '';
   scanOther.value = '';
+  ownedAssets.value = [];
+  assetsFetched.value = false;
+  selectedAsset.value = null;
+});
+
+// Switching the Manual chain resets the token back to native.
+watch(chainManual, () => {
+  manualToken.value = null;
+  tokenAddrInput.value = '';
 });
 
 function resetAll(): void {
-  asset.value = 'SOL';
+  chainManual.value = 'sol';
+  manualToken.value = null;
+  tokenAddrInput.value = '';
   side.value = 'buy';
   amount.value = '';
   price.value = '';
   fee.value = '0';
   date.value = nowLocalDatetime();
+  ownedAssets.value = [];
+  assetsFetched.value = false;
+  selectedAsset.value = null;
   candidates.value = [];
   selected.value = [];
   scanned.value = false;
@@ -127,7 +173,24 @@ function errMsg(e: unknown, fallback: string): string {
   return e instanceof Error ? e.message : fallback;
 }
 
-// --- Manual submit ---
+// --- Manual ---
+function resetManualToken(): void {
+  manualToken.value = null;
+  tokenAddrInput.value = '';
+}
+
+async function lookupManualToken(): Promise<void> {
+  const addr = tokenAddrInput.value.trim();
+  if (!addr) return;
+  try {
+    const res = await tx.lookupToken(chainManual.value, addr);
+    manualToken.value = res.token;
+    if (res.priceUsd != null && res.priceUsd > 0) price.value = String(res.priceUsd);
+  } catch (e) {
+    toast.error(errMsg(e, 'Token not found'));
+  }
+}
+
 async function submitManual(): Promise<void> {
   const a = parseFloat(amount.value);
   const p = parseFloat(price.value);
@@ -135,11 +198,16 @@ async function submitManual(): Promise<void> {
   if (!(a > 0)) return void toast.error('Enter an amount greater than 0');
   if (!(p >= 0)) return void toast.error('Enter a valid USD price');
 
+  const t = manualTokenEffective.value;
   submitting.value = true;
   try {
     await useOrders().addOrder({
-      chain: asset.value === 'SOL' ? 'sol' : 'sui',
-      asset: asset.value,
+      chain: t.chain,
+      address: t.address,
+      asset: t.symbol,
+      decimals: t.decimals,
+      name: t.name,
+      image: t.image,
       side: side.value,
       amount: a,
       priceUsd: p,
@@ -157,7 +225,63 @@ async function submitManual(): Promise<void> {
   }
 }
 
-// --- Scan ---
+// --- Scan assets ---
+async function runFetchAssets(): Promise<void> {
+  try {
+    ownedAssets.value = await tx.fetchAssets(chainTx.value);
+    assetsFetched.value = true;
+    selectedAsset.value = null;
+    if (ownedAssets.value.length === 0) toast.info('No tokens found in your wallets');
+  } catch (e) {
+    toast.error(errMsg(e, 'Could not fetch your tokens'));
+  }
+}
+
+function selectAsset(a: OwnedAsset): void {
+  selectedAsset.value = a;
+  assetSide.value = 'buy';
+  assetAmount.value = a.balance ? String(a.balance) : '';
+  assetPrice.value = a.priceUsd != null ? String(a.priceUsd) : '';
+  assetDate.value = nowLocalDatetime();
+  assetFee.value = '0';
+}
+
+async function submitAsset(): Promise<void> {
+  const a = selectedAsset.value;
+  if (!a) return;
+  const amt = parseFloat(assetAmount.value);
+  const p = parseFloat(assetPrice.value);
+  const f = parseFloat(assetFee.value || '0');
+  if (!(amt > 0)) return void toast.error('Enter an amount greater than 0');
+  if (!(p >= 0)) return void toast.error('Enter a valid USD price');
+
+  submitting.value = true;
+  try {
+    await useOrders().addOrder({
+      chain: a.chain,
+      address: a.address,
+      asset: a.symbol,
+      decimals: a.decimals,
+      name: a.name,
+      image: a.image,
+      side: assetSide.value,
+      amount: amt,
+      priceUsd: p,
+      feeUsd: Number.isFinite(f) ? f : 0,
+      gasUsd: 0,
+      timestamp: new Date(assetDate.value).toISOString(),
+    });
+    toast.success('Order added');
+    emit('created');
+    open.value = false;
+  } catch (e) {
+    toast.error(errMsg(e, 'Failed to add order'));
+  } finally {
+    submitting.value = false;
+  }
+}
+
+// --- Swaps ---
 async function runScan(): Promise<void> {
   try {
     candidates.value = await tx.scan(chainTx.value, scanAddress.value);
@@ -223,35 +347,130 @@ async function importLink(): Promise<void> {
     <DialogContent class="sm:max-w-md">
       <DialogHeader>
         <DialogTitle>Add order</DialogTitle>
-        <DialogDescription>Scan your wallet, paste a tx link, or enter manually.</DialogDescription>
+        <DialogDescription>Scan the tokens you hold, add one by address, or import on-chain trades.</DialogDescription>
       </DialogHeader>
 
-      <Tabs default-value="manual" class="w-full">
-        <TabsList class="grid w-full grid-cols-3">
-          <TabsTrigger value="manual">Manual</TabsTrigger>
+      <Tabs default-value="scan" class="w-full">
+        <TabsList class="grid w-full grid-cols-4">
           <TabsTrigger value="scan">Scan</TabsTrigger>
-          <TabsTrigger value="link">Tx link</TabsTrigger>
+          <TabsTrigger value="manual">Manual</TabsTrigger>
+          <TabsTrigger value="swaps">Swaps</TabsTrigger>
+          <TabsTrigger value="link">Link</TabsTrigger>
         </TabsList>
+
+        <!-- Scan assets -->
+        <TabsContent value="scan" class="space-y-4 pt-2">
+          <ChainToggle v-model="chainTx" />
+          <Button variant="outline" class="w-full gap-2" :disabled="tx.fetchingAssets.value" @click="runFetchAssets">
+            <Loader2 v-if="tx.fetchingAssets.value" class="size-4 animate-spin" />
+            <Search v-else class="size-4" />
+            Scan my tokens
+          </Button>
+
+          <div v-if="ownedAssets.length" class="max-h-56 space-y-1 overflow-y-auto">
+            <button
+              v-for="a in ownedAssets"
+              :key="`${a.chain}:${a.address}`"
+              type="button"
+              :class="cn(
+                'flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors',
+                selectedAsset && selectedAsset.address === a.address ? 'border-primary bg-accent' : 'border-border hover:bg-accent/50',
+              )"
+              @click="selectAsset(a)"
+            >
+              <TokenIcon :chain="a.chain" :image="a.image" class="size-5" />
+              <span class="min-w-0">
+                <span class="font-medium">{{ a.symbol }}</span>
+                <span v-if="a.name" class="ml-1 truncate text-xs text-muted-foreground">{{ a.name }}</span>
+              </span>
+              <span class="ml-auto shrink-0 text-right">
+                <span class="block tabular-nums">{{ fmtNum(a.balance) }}</span>
+                <span class="block text-xs text-muted-foreground">{{ a.priceUsd != null ? fmtUsd(a.priceUsd, 4) : '—' }}</span>
+              </span>
+            </button>
+          </div>
+          <p v-else-if="assetsFetched && !tx.fetchingAssets.value" class="py-3 text-center text-sm text-muted-foreground">
+            No tokens found in your wallets.
+          </p>
+          <p v-else-if="!assetsFetched" class="text-xs text-muted-foreground">
+            Scans every {{ chainTx === 'sol' ? 'Solana' : 'Sui' }} wallet in
+            <RouterLink to="/settings" class="underline hover:text-foreground">Settings</RouterLink>.
+          </p>
+
+          <!-- Pre-filled order for the selected token (editable). -->
+          <div v-if="selectedAsset" class="space-y-3 rounded-md border p-3">
+            <div class="flex items-center gap-2 text-sm">
+              <TokenIcon :chain="selectedAsset.chain" :image="selectedAsset.image" class="size-5" />
+              <span class="font-medium">{{ selectedAsset.symbol }}</span>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                :class="cn('rounded-md border px-3 py-2 text-sm font-medium transition-colors', assetSide === 'buy' ? 'border-profit bg-profit/10 text-profit' : 'border-border text-muted-foreground hover:bg-accent')"
+                @click="assetSide = 'buy'"
+              >Buy</button>
+              <button
+                type="button"
+                :class="cn('rounded-md border px-3 py-2 text-sm font-medium transition-colors', assetSide === 'sell' ? 'border-loss bg-loss/10 text-loss' : 'border-border text-muted-foreground hover:bg-accent')"
+                @click="assetSide = 'sell'"
+              >Sell</button>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div class="space-y-2">
+                <Label for="assetAmount">Amount ({{ selectedAsset.symbol }})</Label>
+                <Input id="assetAmount" v-model="assetAmount" type="number" min="0" step="any" placeholder="0.00" />
+              </div>
+              <div class="space-y-2">
+                <Label for="assetPrice">Price (USD)</Label>
+                <Input id="assetPrice" v-model="assetPrice" type="number" min="0" step="any" placeholder="0.00" />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div class="space-y-2">
+                <Label for="assetDate">Date</Label>
+                <Input id="assetDate" v-model="assetDate" type="datetime-local" />
+              </div>
+              <div class="space-y-2">
+                <Label for="assetFee">Fee (USD)</Label>
+                <Input id="assetFee" v-model="assetFee" type="number" min="0" step="any" />
+              </div>
+            </div>
+            <Button class="w-full" :disabled="submitting" @click="submitAsset">
+              {{ submitting ? 'Adding…' : 'Add order' }}
+            </Button>
+          </div>
+        </TabsContent>
 
         <!-- Manual -->
         <TabsContent value="manual" class="space-y-4 pt-2">
           <div class="space-y-2">
-            <Label>Asset</Label>
-            <div class="grid grid-cols-2 gap-2">
+            <Label>Chain</Label>
+            <ChainToggle v-model="chainManual" />
+          </div>
+
+          <div class="space-y-2">
+            <Label>Token</Label>
+            <div class="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm">
+              <TokenIcon :chain="manualTokenEffective.chain" :image="manualTokenEffective.image" class="size-5" />
+              <span class="font-medium">{{ manualTokenEffective.symbol }}</span>
+              <span v-if="manualTokenEffective.name" class="truncate text-xs text-muted-foreground">{{ manualTokenEffective.name }}</span>
               <button
+                v-if="manualToken"
                 type="button"
-                :class="cn('flex items-center justify-center gap-1.5 rounded-md border px-3 py-2 text-sm font-medium transition-colors', asset === 'SOL' ? 'border-solana bg-solana/10 text-solana' : 'border-border text-muted-foreground hover:bg-accent')"
-                @click="asset = 'SOL'"
-              >
-                <TokenIcon asset="SOL" class="size-4" /> SOL
-              </button>
-              <button
-                type="button"
-                :class="cn('flex items-center justify-center gap-1.5 rounded-md border px-3 py-2 text-sm font-medium transition-colors', asset === 'SUI' ? 'border-sui bg-sui/10 text-sui' : 'border-border text-muted-foreground hover:bg-accent')"
-                @click="asset = 'SUI'"
-              >
-                <TokenIcon asset="SUI" class="size-4" /> SUI
-              </button>
+                class="ml-auto shrink-0 text-xs text-muted-foreground underline hover:text-foreground"
+                @click="resetManualToken"
+              >Use native</button>
+            </div>
+            <div class="flex gap-2">
+              <Input
+                v-model="tokenAddrInput"
+                class="font-mono text-xs"
+                :placeholder="chainManual === 'sol' ? 'SPL mint address' : 'Sui coin type (0x…::module::TOKEN)'"
+              />
+              <Button variant="outline" :disabled="tx.lookingUp.value || !tokenAddrInput.trim()" @click="lookupManualToken">
+                <Loader2 v-if="tx.lookingUp.value" class="size-4 animate-spin" />
+                <span v-else>Look up</span>
+              </Button>
             </div>
           </div>
 
@@ -273,7 +492,7 @@ async function importLink(): Promise<void> {
 
           <div class="grid grid-cols-2 gap-3">
             <div class="space-y-2">
-              <Label for="amount">Amount ({{ asset }})</Label>
+              <Label for="amount">Amount ({{ manualTokenEffective.symbol }})</Label>
               <Input id="amount" v-model="amount" type="number" min="0" step="any" placeholder="0.00" />
             </div>
             <div class="space-y-2">
@@ -303,8 +522,8 @@ async function importLink(): Promise<void> {
           </Button>
         </TabsContent>
 
-        <!-- Scan -->
-        <TabsContent value="scan" class="space-y-4 pt-2">
+        <!-- Swaps (recent swap transactions) -->
+        <TabsContent value="swaps" class="space-y-4 pt-2">
           <ChainToggle v-model="chainTx" />
           <div class="space-y-2">
             <Label for="scanAddr">Wallet to scan</Label>

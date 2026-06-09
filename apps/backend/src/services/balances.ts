@@ -1,6 +1,7 @@
-import type { Asset } from '@pnl/types';
+import { NATIVE_SOL_MINT, NATIVE_SUI_TYPE, tokenKey, type Asset, type Chain } from '@pnl/types';
 import { solanaRpcUrl, type AppConfig } from '../config/env';
-import { getSuiClient } from './suiParser';
+import { getSolanaAssetsByOwner } from './solanaParser';
+import { getSuiAssetsByOwner, getSuiClient } from './suiParser';
 
 /** Live on-chain SOL balance (best-effort; null on failure). */
 export async function getSolBalance(config: AppConfig, address: string): Promise<number | null> {
@@ -53,4 +54,42 @@ export async function getWalletBalances(
     sumChain(suiAddrs, getSuiBalance),
   ]);
   return { SOL, SUI };
+}
+
+/**
+ * Live balance of every token held across a user's wallets, summed per token and
+ * keyed by `${chain}:${address}`. Native coins come from plain RPC (works without
+ * a DAS endpoint); other tokens come from Helius DAS / Sui `getAllBalances`
+ * (best-effort — missing/failed lookups are simply absent from the map).
+ */
+export async function getAllWalletTokenBalances(
+  config: AppConfig,
+  solAddrs: string[],
+  suiAddrs: string[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const add = (chain: Chain, address: string, bal: number): void => {
+    const key = tokenKey(chain, address);
+    out.set(key, (out.get(key) ?? 0) + bal);
+  };
+
+  // Native balances via plain JSON-RPC (no DAS-capable endpoint required).
+  const [solNative, suiNative] = await Promise.all([
+    Promise.all(solAddrs.map((a) => getSolBalance(config, a))),
+    Promise.all(suiAddrs.map((a) => getSuiBalance(config, a))),
+  ]);
+  for (const v of solNative) if (v != null) add('sol', NATIVE_SOL_MINT, v);
+  for (const v of suiNative) if (v != null) add('sui', NATIVE_SUI_TYPE, v);
+
+  // Non-native token balances via DAS / getAllBalances (best-effort).
+  const [solAssets, suiAssets] = await Promise.all([
+    Promise.all(solAddrs.map((a) => getSolanaAssetsByOwner(config, a).catch(() => []))),
+    Promise.all(suiAddrs.map((a) => getSuiAssetsByOwner(config, a).catch(() => []))),
+  ]);
+  for (const assets of solAssets)
+    for (const a of assets) if (a.address !== NATIVE_SOL_MINT) add('sol', a.address, a.balance);
+  for (const assets of suiAssets)
+    for (const a of assets) if (a.address !== NATIVE_SUI_TYPE) add('sui', a.address, a.balance);
+
+  return out;
 }

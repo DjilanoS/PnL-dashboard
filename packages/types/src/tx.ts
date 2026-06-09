@@ -1,4 +1,5 @@
 import type { Chain, OrderCore } from './order';
+import type { TokenMeta } from './token';
 
 /**
  * A parsed trade ready for review — the same shape as an order's core data,
@@ -41,4 +42,33 @@ export interface ImportRequest {
   chain: Chain;
   urlOrSig?: string;
   candidate?: ParsedOrderPreview;
+}
+
+/** One token the user holds on-chain (a row of the "scan assets" result). */
+export interface OwnedAsset extends TokenMeta {
+  /** UI (whole-coin) balance summed across the user's wallets on this chain. */
+  balance: number;
+  /** Current USD price per token, or null if unknown. */
+  priceUsd: number | null;
+}
+
+/** Request to scan the user's tracked wallets for held tokens on a chain. */
+export interface AssetsScanRequest {
+  chain: Chain;
+}
+
+export interface AssetsScanResponse {
+  assets: OwnedAsset[];
+}
+
+/** Request to look up one token's metadata by address (manual flow). */
+export interface TokenLookupRequest {
+  chain: Chain;
+  /** SPL mint (Solana) or coin type (Sui). */
+  address: string;
+}
+
+export interface TokenLookupResponse {
+  token: TokenMeta;
+  priceUsd: number | null;
 }

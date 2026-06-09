@@ -2,8 +2,34 @@ import { Type } from '@sinclair/typebox';
 
 /** Shared TypeBox schemas reused across route modules. */
 export const ChainSchema = Type.Union([Type.Literal('sol'), Type.Literal('sui')]);
-export const AssetSchema = Type.Union([Type.Literal('SOL'), Type.Literal('SUI')]);
+/** Display ticker (any token symbol; was a SOL/SUI union). */
+export const AssetSchema = Type.String();
 export const SideSchema = Type.Union([Type.Literal('buy'), Type.Literal('sell')]);
+
+/** Denormalized token metadata (matches @pnl/types TokenMeta). */
+export const TokenMetaSchema = Type.Object({
+  chain: ChainSchema,
+  address: Type.String(),
+  symbol: Type.String(),
+  name: Type.Optional(Type.String()),
+  image: Type.Optional(Type.String()),
+  decimals: Type.Number(),
+});
+
+/** One token held on-chain (matches @pnl/types OwnedAsset). */
+export const OwnedAssetSchema = Type.Composite([
+  TokenMetaSchema,
+  Type.Object({
+    balance: Type.Number(),
+    priceUsd: Type.Union([Type.Number(), Type.Null()]),
+  }),
+]);
+
+export const AssetsScanResponseSchema = Type.Object({ assets: Type.Array(OwnedAssetSchema) });
+export const TokenLookupResponseSchema = Type.Object({
+  token: TokenMetaSchema,
+  priceUsd: Type.Union([Type.Number(), Type.Null()]),
+});
 export const OrderSourceSchema = Type.Union([
   Type.Literal('manual'),
   Type.Literal('tx'),
@@ -21,7 +47,11 @@ export const ErrorSchema = Type.Object({ error: Type.String() });
 export const OrderDtoSchema = Type.Object({
   id: Type.String(),
   chain: ChainSchema,
+  address: Type.String(),
   asset: AssetSchema,
+  decimals: Type.Number(),
+  name: Type.Optional(Type.String()),
+  image: Type.Optional(Type.String()),
   side: SideSchema,
   amount: Type.Number(),
   priceUsd: Type.Number(),
@@ -37,7 +67,12 @@ export const OrderDtoSchema = Type.Object({
 /** Body for creating a manual order. */
 export const ManualOrderSchema = Type.Object({
   chain: ChainSchema,
+  // Token identity; address defaults to the chain's native coin server-side.
+  address: Type.Optional(Type.String()),
   asset: AssetSchema,
+  decimals: Type.Optional(Type.Number({ default: 9 })),
+  name: Type.Optional(Type.String()),
+  image: Type.Optional(Type.String()),
   side: SideSchema,
   amount: Type.Number({ exclusiveMinimum: 0 }),
   priceUsd: Type.Number({ minimum: 0 }),
@@ -89,9 +124,14 @@ export const MeResponseSchema = Type.Object({
   wallets: WalletsResponseSchema,
 });
 
-/** Per-asset PnL (matches @pnl/types AssetPnl). */
+/** Per-token PnL (matches @pnl/types AssetPnl). */
 export const AssetPnlSchema = Type.Object({
+  chain: ChainSchema,
+  address: Type.String(),
   asset: AssetSchema,
+  name: Type.Optional(Type.String()),
+  image: Type.Optional(Type.String()),
+  decimals: Type.Number(),
   held: Type.Number(),
   avgCost: Type.Number(),
   costBasis: Type.Number(),
@@ -114,8 +154,12 @@ export const PnlSummarySchema = Type.Object({
 });
 
 export const HoldingSchema = Type.Object({
-  asset: AssetSchema,
   chain: ChainSchema,
+  address: Type.String(),
+  asset: AssetSchema,
+  name: Type.Optional(Type.String()),
+  image: Type.Optional(Type.String()),
+  decimals: Type.Number(),
   walletBalance: Type.Union([Type.Number(), Type.Null()]),
   ledgerQty: Type.Number(),
   avgCost: Type.Number(),
@@ -134,7 +178,7 @@ export const HoldingsResponseSchema = Type.Object({
 export const NavPointSchema = Type.Object({
   date: Type.String(),
   totalValueUsd: Type.Number(),
-  breakdown: Type.Array(Type.Object({ asset: AssetSchema, valueUsd: Type.Number() })),
+  breakdown: Type.Array(Type.Object({ chain: ChainSchema, asset: AssetSchema, valueUsd: Type.Number() })),
 });
 
 export const TimeseriesResponseSchema = Type.Object({
@@ -151,7 +195,11 @@ export const TimeseriesResponseSchema = Type.Object({
 /** A parsed-order preview (matches @pnl/types ParsedOrderPreview). */
 export const ParsedPreviewSchema = Type.Object({
   chain: ChainSchema,
+  address: Type.String(),
   asset: AssetSchema,
+  decimals: Type.Number(),
+  name: Type.Optional(Type.String()),
+  image: Type.Optional(Type.String()),
   side: SideSchema,
   amount: Type.Number(),
   priceUsd: Type.Number(),
