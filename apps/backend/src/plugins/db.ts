@@ -8,10 +8,31 @@ import mongoose from 'mongoose';
 interface MongooseCache {
   conn: typeof mongoose | null;
   promise: Promise<typeof mongoose> | null;
+  legacyDropped?: boolean;
 }
 
 const globalForMongoose = globalThis as unknown as { __mongoose?: MongooseCache };
 const cache: MongooseCache = (globalForMongoose.__mongoose ??= { conn: null, promise: null });
+
+/**
+ * Drop indexes from the pre-token price-cache schema. Those collections used a
+ * unique index on `asset` ({asset} / {asset,dayTs}); the token-keyed rows have
+ * no `asset`, so the stale unique index would reject every row after the first
+ * with a duplicate-key error. Best-effort and idempotent (missing index → no-op).
+ */
+async function dropLegacyIndexes(conn: typeof mongoose): Promise<void> {
+  const drops: [string, string][] = [
+    ['pricecaches', 'asset_1'],
+    ['historicalprices', 'asset_1_dayTs_1'],
+  ];
+  for (const [coll, index] of drops) {
+    try {
+      await conn.connection.db?.collection(coll).dropIndex(index);
+    } catch {
+      // Index already gone (fresh DB) or collection missing — ignore.
+    }
+  }
+}
 
 export async function connectDb(uri: string): Promise<typeof mongoose> {
   if (cache.conn) return cache.conn;
@@ -24,6 +45,12 @@ export async function connectDb(uri: string): Promise<typeof mongoose> {
     serverSelectionTimeoutMS: 5000,
   });
   cache.conn = await cache.promise;
+
+  // One-time, best-effort cleanup of the pre-token-migration indexes.
+  if (!cache.legacyDropped) {
+    cache.legacyDropped = true;
+    await dropLegacyIndexes(cache.conn).catch(() => {});
+  }
   return cache.conn;
 }
 

@@ -1,5 +1,5 @@
 import mongoose, { Schema, Types, type HydratedDocument, type Model } from 'mongoose';
-import type { Order as OrderDTO } from '@pnl/types';
+import { NATIVE_SOL_MINT, NATIVE_SUI_TYPE, type Order as OrderDTO } from '@pnl/types';
 
 /**
  * The immutable order ledger. PnL is always derived by replaying these rows —
@@ -10,7 +10,14 @@ import type { Order as OrderDTO } from '@pnl/types';
 export interface OrderDoc {
   userId: Types.ObjectId;
   chain: 'sol' | 'sui';
-  asset: 'SOL' | 'SUI';
+  /** Token address (SPL mint / Sui coin type). Absent on legacy native rows. */
+  address?: string;
+  /** Display ticker. Was 'SOL'|'SUI'; now any token symbol. */
+  asset: string;
+  /** On-chain decimals; defaults to 9 (legacy native rows). */
+  decimals?: number;
+  tokenName?: string | null;
+  tokenImage?: string | null;
   side: 'buy' | 'sell';
   amount: number;
   priceUsd: number;
@@ -29,7 +36,13 @@ const orderSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     chain: { type: String, enum: ['sol', 'sui'], required: true },
-    asset: { type: String, enum: ['SOL', 'SUI'], required: true },
+    // Token address (SPL mint / Sui coin type). Required for new rows; legacy
+    // native rows lack it and resolve to the canonical address at read time.
+    address: { type: String, default: undefined },
+    asset: { type: String, required: true },
+    decimals: { type: Number, default: 9 },
+    tokenName: { type: String, default: undefined },
+    tokenImage: { type: String, default: undefined },
     side: { type: String, enum: ['buy', 'sell'], required: true },
     amount: { type: Schema.Types.Decimal128, required: true },
     priceUsd: { type: Schema.Types.Decimal128, required: true },
@@ -58,11 +71,21 @@ function d2n(v: unknown): number {
   return parseFloat(String(v));
 }
 
+/** Token address for a row, resolving legacy native rows to the canonical address. */
+function addressFor(doc: OrderDoc): string {
+  if (doc.address) return doc.address;
+  return doc.chain === 'sol' ? NATIVE_SOL_MINT : NATIVE_SUI_TYPE;
+}
+
 export function toOrderDTO(doc: HydratedDocument<OrderDoc>): OrderDTO {
   return {
     id: String(doc._id),
     chain: doc.chain,
+    address: addressFor(doc),
     asset: doc.asset,
+    decimals: doc.decimals ?? 9,
+    name: doc.tokenName ?? undefined,
+    image: doc.tokenImage ?? undefined,
     side: doc.side,
     amount: d2n(doc.amount),
     priceUsd: d2n(doc.priceUsd),

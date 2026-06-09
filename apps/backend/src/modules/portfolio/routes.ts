@@ -1,16 +1,26 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { Type } from '@sinclair/typebox';
 import mongoose from 'mongoose';
-import type { Holding, NavRange } from '@pnl/types';
+import { tokenKey, type Holding, type NavRange, type TokenRef } from '@pnl/types';
 import { Order, toOrderDTO } from '../../models/Order';
 import { Wallet } from '../../models/Wallet';
 import { getUserRpc } from '../../models/User';
 import { computePnl, type LedgerEntry } from '../../services/pnlEngine';
 import { computeNavSeries } from '../../services/nav';
 import { getCurrentPricesCached } from '../../services/prices';
-import { getWalletBalances } from '../../services/balances';
+import { getAllWalletTokenBalances } from '../../services/balances';
 import { HoldingsResponseSchema, PnlSummarySchema, TimeseriesResponseSchema } from '../../schemas';
 import { configWithUserRpc, type AppConfig } from '../../config/env';
+
+/** Distinct tokens referenced by a set of ledger entries. */
+function tokensOf(entries: LedgerEntry[]): TokenRef[] {
+  const seen = new Map<string, TokenRef>();
+  for (const e of entries) {
+    const key = tokenKey(e.chain, e.address);
+    if (!seen.has(key)) seen.set(key, { chain: e.chain, address: e.address });
+  }
+  return [...seen.values()];
+}
 
 const RangeSchema = Type.Union([
   Type.Literal('7d'),
@@ -29,7 +39,12 @@ const portfolioRoutes: FastifyPluginAsyncTypebox = async (app) => {
     return docs.map((d) => {
       const o = toOrderDTO(d);
       return {
+        chain: o.chain,
+        address: o.address,
         asset: o.asset,
+        decimals: o.decimals,
+        name: o.name,
+        image: o.image,
         side: o.side,
         amount: o.amount,
         priceUsd: o.priceUsd,
@@ -41,21 +56,22 @@ const portfolioRoutes: FastifyPluginAsyncTypebox = async (app) => {
   }
 
   app.get('/pnl/summary', { schema: { response: { 200: PnlSummarySchema } } }, async (req) => {
-    const [entries, prices] = await Promise.all([loadEntries(req.user.sub), getCurrentPricesCached()]);
+    const entries = await loadEntries(req.user.sub);
+    const prices = await getCurrentPricesCached(tokensOf(entries));
     return computePnl(entries, prices);
   });
 
   app.get('/holdings', { schema: { response: { 200: HoldingsResponseSchema } } }, async (req) => {
     const userId = new mongoose.Types.ObjectId(req.user.sub);
-    const [entries, prices, walletDocs, rpc] = await Promise.all([
+    const [entries, walletDocs, rpc] = await Promise.all([
       loadEntries(req.user.sub),
-      getCurrentPricesCached(),
       Wallet.find({ userId }),
       getUserRpc(req.user.sub),
     ]);
-    // Live balances aggregate across all tracked wallets per chain, using the
+    const prices = await getCurrentPricesCached(tokensOf(entries));
+    // Live balances per token, summed across all tracked wallets, using the
     // user's own RPC endpoint (or the mainnet-beta default).
-    const balances = await getWalletBalances(
+    const balances = await getAllWalletTokenBalances(
       configWithUserRpc(config, rpc),
       walletDocs.filter((w) => w.chain === 'sol').map((w) => w.address),
       walletDocs.filter((w) => w.chain === 'sui').map((w) => w.address),
@@ -66,9 +82,13 @@ const portfolioRoutes: FastifyPluginAsyncTypebox = async (app) => {
     const totalValueUsd = held.reduce((s, a) => s + a.marketValue, 0);
 
     const holdings: Holding[] = held.map((a) => ({
+      chain: a.chain,
+      address: a.address,
       asset: a.asset,
-      chain: a.asset === 'SOL' ? 'sol' : 'sui',
-      walletBalance: balances[a.asset],
+      name: a.name,
+      image: a.image,
+      decimals: a.decimals,
+      walletBalance: balances.get(tokenKey(a.chain, a.address)) ?? null,
       ledgerQty: a.held,
       avgCost: a.avgCost,
       costBasis: a.costBasis,

@@ -18,7 +18,7 @@ const props = defineProps<{ holdings: Holding[]; pnl: PnlSummary | null }>();
 
 const rows = computed(() =>
   props.holdings.map((h) => {
-    const p = props.pnl?.perAsset.find((a) => a.asset === h.asset);
+    const p = props.pnl?.perAsset.find((a) => a.chain === h.chain && a.address === h.address);
     return { ...h, avgBuy: p?.avgBuy ?? 0, avgSell: p?.avgSell ?? 0 };
   }),
 );
@@ -45,13 +45,13 @@ function tone(n: number): string {
         </TableRow>
       </TableHeader>
       <TableBody>
-        <TableRow v-for="r in rows" :key="r.asset">
+        <TableRow v-for="r in rows" :key="`${r.chain}:${r.address}`">
           <TableCell>
             <Badge
               variant="outline"
-              :class="cn('gap-1', r.asset === 'SOL' ? 'border-solana/40 text-solana' : 'border-sui/40 text-sui')"
+              :class="cn('gap-1', r.chain === 'sol' ? 'border-solana/40 text-solana' : 'border-sui/40 text-sui')"
             >
-              <TokenIcon :asset="r.asset" />
+              <TokenIcon :chain="r.chain" :image="r.image" />
               {{ r.asset }}
             </Badge>
           </TableCell>

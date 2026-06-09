@@ -1,9 +1,8 @@
-import type { Asset, NavPoint, NavRange } from '@pnl/types';
+import { tokenKey, type Chain, type NavPoint, type NavRange, type TokenRef } from '@pnl/types';
 import type { LedgerEntry } from './pnlEngine';
 import { getCurrentPricesCached, getHistoricalPriceCached } from './prices';
 
 const DAY = 86_400_000;
-const ASSETS: Asset[] = ['SOL', 'SUI'];
 const SPAN_DAYS: Record<NavRange, number> = {
   '7d': 7,
   '30d': 30,
@@ -12,11 +11,26 @@ const SPAN_DAYS: Record<NavRange, number> = {
   all: Number.POSITIVE_INFINITY,
 };
 
-/** Coins of `asset` held as of `cutoffMs` (buys − sells up to that instant). */
-function heldAt(entries: LedgerEntry[], asset: Asset, cutoffMs: number): number {
+interface NavToken extends TokenRef {
+  /** Display symbol (latest wins). */
+  asset: string;
+}
+
+/** Distinct tokens (with display symbol) referenced by the ledger. */
+function tokensOf(entries: LedgerEntry[]): NavToken[] {
+  const seen = new Map<string, NavToken>();
+  for (const e of entries) {
+    // Entries arrive time-ordered, so the last write keeps the most recent symbol.
+    seen.set(tokenKey(e.chain, e.address), { chain: e.chain, address: e.address, asset: e.asset });
+  }
+  return [...seen.values()];
+}
+
+/** Coins of a token held as of `cutoffMs` (buys − sells up to that instant). */
+function heldAt(entries: LedgerEntry[], chain: Chain, address: string, cutoffMs: number): number {
   let qty = 0;
   for (const e of entries) {
-    if (e.asset !== asset) continue;
+    if (e.chain !== chain || e.address !== address) continue;
     if (new Date(e.timestamp).getTime() > cutoffMs) continue;
     qty += e.side === 'buy' ? e.amount : -e.amount;
   }
@@ -34,6 +48,7 @@ export async function computeNavSeries(
 ): Promise<NavPoint[]> {
   if (entries.length === 0) return [];
 
+  const tokens = tokensOf(entries);
   const todayMid = Math.floor(nowMs / DAY) * DAY;
   const firstMid =
     Math.floor(Math.min(...entries.map((e) => new Date(e.timestamp).getTime())) / DAY) * DAY;
@@ -44,23 +59,24 @@ export async function computeNavSeries(
   const days: number[] = [];
   for (let d = startMid; d <= todayMid; d += DAY) days.push(d);
 
-  const current = await getCurrentPricesCached();
+  const current = await getCurrentPricesCached(tokens);
 
   return Promise.all(
     days.map(async (d) => {
       const dayEnd = d + DAY - 1;
       const isToday = d === todayMid;
-      const breakdown: { asset: Asset; valueUsd: number }[] = [];
+      const breakdown: { chain: Chain; asset: string; valueUsd: number }[] = [];
       let total = 0;
 
-      for (const asset of ASSETS) {
-        const qty = heldAt(entries, asset, dayEnd);
+      for (const t of tokens) {
+        const qty = heldAt(entries, t.chain, t.address, dayEnd);
         if (qty <= 0) continue;
+        const key = tokenKey(t.chain, t.address);
         const price = isToday
-          ? current[asset]
-          : ((await getHistoricalPriceCached(asset, d / 1000)) ?? current[asset] ?? 0);
+          ? current[key] ?? 0
+          : ((await getHistoricalPriceCached(t.chain, t.address, d / 1000)) ?? current[key] ?? 0);
         const valueUsd = qty * price;
-        breakdown.push({ asset, valueUsd });
+        breakdown.push({ chain: t.chain, asset: t.asset, valueUsd });
         total += valueUsd;
       }
 

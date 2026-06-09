@@ -1,10 +1,13 @@
 import { ref } from 'vue';
 import type {
+  AssetsScanResponse,
   Chain,
   Order,
+  OwnedAsset,
   ParseResponse,
   ParsedOrderPreview,
   ScanResponse,
+  TokenLookupResponse,
 } from '@pnl/types';
 import { api } from '@/lib/api';
 import { useOrders } from '@/stores/useOrders';
@@ -13,6 +16,29 @@ export function useTxImport() {
   const parsing = ref(false);
   const scanning = ref(false);
   const importing = ref(false);
+  const fetchingAssets = ref(false);
+  const lookingUp = ref(false);
+
+  /** Fetch the tokens held across the user's wallets on a chain (Scan-assets flow). */
+  async function fetchAssets(chain: Chain): Promise<OwnedAsset[]> {
+    fetchingAssets.value = true;
+    try {
+      const res = await api.post<AssetsScanResponse>('/tx/assets', { chain });
+      return res.assets;
+    } finally {
+      fetchingAssets.value = false;
+    }
+  }
+
+  /** Look up one token's metadata + price by address (Manual flow). */
+  async function lookupToken(chain: Chain, address: string): Promise<TokenLookupResponse> {
+    lookingUp.value = true;
+    try {
+      return await api.post<TokenLookupResponse>('/tx/token', { chain, address });
+    } finally {
+      lookingUp.value = false;
+    }
+  }
 
   async function parse(chain: Chain, urlOrSig: string, address?: string): Promise<ParsedOrderPreview> {
     parsing.value = true;
@@ -56,5 +82,17 @@ export function useTxImport() {
     }
   }
 
-  return { parsing, scanning, importing, parse, scan, importCandidate, importLink };
+  return {
+    parsing,
+    scanning,
+    importing,
+    fetchingAssets,
+    lookingUp,
+    parse,
+    scan,
+    fetchAssets,
+    lookupToken,
+    importCandidate,
+    importLink,
+  };
 }

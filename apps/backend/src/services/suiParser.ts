@@ -1,9 +1,15 @@
 import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from '@mysten/sui/jsonRpc';
 import type { SuiTransactionBlockResponse } from '@mysten/sui/jsonRpc';
 import { normalizeSuiAddress } from '@mysten/sui/utils';
-import type { Asset, ParsedOrderPreview } from '@pnl/types';
+import {
+  NATIVE_SUI_TYPE,
+  shortAddress,
+  type OwnedAsset,
+  type ParsedOrderPreview,
+  type TokenMeta,
+} from '@pnl/types';
 import type { AppConfig } from '../config/env';
-import { getHistoricalPrice } from './prices';
+import { getHistoricalPriceForToken } from './prices';
 
 // Cache one client per RPC URL so per-user custom endpoints don't collide.
 const clientsByUrl = new Map<string, SuiJsonRpcClient>();
@@ -71,13 +77,14 @@ export async function parseSuiTx(
 
   const side = sui > 0 ? 'buy' : 'sell';
   const amount = Math.abs(sui);
-  const asset: Asset = 'SUI';
   const tsMs = Number(tx.timestampMs ?? 0);
-  const price = (tsMs ? await getHistoricalPrice(asset, tsMs / 1000) : null) ?? 0;
+  const price = (tsMs ? await getHistoricalPriceForToken('sui', NATIVE_SUI_TYPE, tsMs / 1000) : null) ?? 0;
 
   return {
     chain: 'sui',
-    asset,
+    address: NATIVE_SUI_TYPE,
+    asset: 'SUI',
+    decimals: 9,
     side,
     amount,
     priceUsd: price,
@@ -130,4 +137,72 @@ export async function scanSui(
     if (preview) out.push(preview);
   }
   return out;
+}
+
+// --- Sui coin discovery (the equivalent of Helius DAS for Sui) ---
+
+/** All coin balances held by `owner` → OwnedAsset rows. Prices filled by the caller. */
+export async function getSuiAssetsByOwner(config: AppConfig, owner: string): Promise<OwnedAsset[]> {
+  if (!owner) throw new Error('No wallet address provided');
+  const client = getSuiClient(config);
+  const balances = await client.getAllBalances({ owner: normalizeSuiAddress(owner) });
+
+  const out: OwnedAsset[] = [];
+  for (const b of balances) {
+    let total: bigint;
+    try {
+      total = BigInt(b.totalBalance);
+    } catch {
+      total = 0n;
+    }
+    if (total <= 0n) continue;
+
+    const native = isSuiCoin(b.coinType);
+    // Canonicalize the native coin so it matches the parser/ledger address.
+    const address = native ? NATIVE_SUI_TYPE : b.coinType;
+    const meta = await client.getCoinMetadata({ coinType: b.coinType }).catch(() => null);
+    const decimals = meta?.decimals ?? (native ? 9 : 0);
+    out.push({
+      chain: 'sui',
+      address,
+      symbol: meta?.symbol || (native ? 'SUI' : shortAddress(address)),
+      name: meta?.name ?? (native ? 'Sui' : undefined),
+      image: meta?.iconUrl ?? undefined,
+      decimals,
+      balance: Number(total) / 10 ** decimals,
+      priceUsd: null,
+    });
+  }
+  return out;
+}
+
+/** Metadata for one Sui coin type (manual flow). Null if not found. */
+export async function getSuiCoinMeta(config: AppConfig, coinType: string): Promise<TokenMeta | null> {
+  const native = isSuiCoin(coinType);
+  const address = native ? NATIVE_SUI_TYPE : coinType;
+  const meta = await getSuiClient(config).getCoinMetadata({ coinType }).catch(() => null);
+  if (!meta && !native) return null;
+  return {
+    chain: 'sui',
+    address,
+    symbol: meta?.symbol || (native ? 'SUI' : shortAddress(address)),
+    name: meta?.name ?? (native ? 'Sui' : undefined),
+    image: meta?.iconUrl ?? undefined,
+    decimals: meta?.decimals ?? (native ? 9 : 0),
+  };
+}
+
+/** Live balance of one coin type for an owner, in whole coins (best-effort, null on failure). */
+export async function getSuiTokenBalance(
+  config: AppConfig,
+  owner: string,
+  coinType: string,
+  decimals: number,
+): Promise<number | null> {
+  try {
+    const bal = await getSuiClient(config).getBalance({ owner: normalizeSuiAddress(owner), coinType });
+    return Number(BigInt(bal.totalBalance)) / 10 ** decimals;
+  } catch {
+    return null;
+  }
 }

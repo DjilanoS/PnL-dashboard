@@ -91,9 +91,9 @@ const table = useVueTable({
           <TableCell>
             <Badge
               variant="outline"
-              :class="cn('gap-1', row.original.asset === 'SOL' ? 'border-solana/40 text-solana' : 'border-sui/40 text-sui')"
+              :class="cn('gap-1', row.original.chain === 'sol' ? 'border-solana/40 text-solana' : 'border-sui/40 text-sui')"
             >
-              <TokenIcon :asset="row.original.asset" />
+              <TokenIcon :chain="row.original.chain" :image="row.original.image" />
               {{ row.original.asset }}
             </Badge>
           </TableCell>

@@ -9,3 +9,4 @@ export type * from './tx';
 
 // Runtime helpers (shared values, not just types).
 export * from './messages';
+export * from './token';
