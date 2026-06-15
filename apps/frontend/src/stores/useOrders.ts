@@ -24,6 +24,14 @@ async function addOrder(input: ManualOrderInput): Promise<Order> {
   return created;
 }
 
+async function updateOrder(id: string, input: ManualOrderInput): Promise<Order> {
+  const updated = await api.patch<Order>(`/orders/${id}`, input);
+  orders.value = orders.value
+    .map((o) => (o.id === id ? updated : o))
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  return updated;
+}
+
 async function removeOrder(id: string): Promise<void> {
   await api.del(`/orders/${id}`);
   orders.value = orders.value.filter((o) => o.id !== id);
@@ -36,5 +44,5 @@ function upsertOrder(order: Order): void {
 }
 
 export function useOrders() {
-  return { orders, loading, loaded, fetchOrders, addOrder, removeOrder, upsertOrder };
+  return { orders, loading, loaded, fetchOrders, addOrder, updateOrder, removeOrder, upsertOrder };
 }

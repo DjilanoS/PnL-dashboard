@@ -38,6 +38,45 @@ const orderRoutes: FastifyPluginAsyncTypebox = async (app) => {
     return toOrderDTO(doc);
   });
 
+  // Edit an existing order (reuses the manual-order body). Provenance (source,
+  // txSignature) is preserved; only the editable trade fields change.
+  app.patch(
+    '/:id',
+    {
+      schema: {
+        params: Type.Object({ id: Type.String() }),
+        body: ManualOrderSchema,
+        response: { 200: OrderDtoSchema, 404: ErrorSchema },
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params;
+      if (!mongoose.isValidObjectId(id)) return reply.code(404).send({ error: 'not_found' });
+      const b = req.body;
+      const doc = await Order.findOneAndUpdate(
+        { _id: id, userId: req.user.sub },
+        {
+          chain: b.chain,
+          address: b.address?.trim() || nativeTokenAddress(b.chain),
+          asset: b.asset,
+          decimals: b.decimals ?? 9,
+          tokenName: b.name ?? null,
+          tokenImage: b.image ?? null,
+          side: b.side,
+          amount: b.amount,
+          priceUsd: b.priceUsd,
+          quote: b.quote ?? { symbol: 'USD', amount: b.amount * b.priceUsd },
+          feeUsd: b.feeUsd,
+          gasUsd: b.gasUsd,
+          timestamp: new Date(b.timestamp),
+        },
+        { new: true },
+      );
+      if (!doc) return reply.code(404).send({ error: 'not_found' });
+      return toOrderDTO(doc);
+    },
+  );
+
   // Delete an order from the ledger.
   app.delete(
     '/:id',

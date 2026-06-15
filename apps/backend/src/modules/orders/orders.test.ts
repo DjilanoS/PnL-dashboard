@@ -66,3 +66,36 @@ test('orders require auth, then create / list / delete', async () => {
   res = await app.inject({ method: 'GET', url: '/orders', headers });
   assert.equal((res.json() as unknown[]).length, 0);
 });
+
+test('PATCH /orders/:id edits an order and 404s for unknown ids', async () => {
+  const headers = { authorization: `Bearer ${token}` };
+
+  const created = await app.inject({
+    method: 'POST',
+    url: '/orders',
+    headers,
+    payload: { chain: 'sol', asset: 'JUP', side: 'buy', amount: 5, priceUsd: 0.8, feeUsd: 0, gasUsd: 0, timestamp: new Date('2026-03-01T00:00:00Z').toISOString() },
+  });
+  const o = created.json() as { id: string };
+
+  const patched = await app.inject({
+    method: 'PATCH',
+    url: `/orders/${o.id}`,
+    headers,
+    payload: { chain: 'sol', asset: 'JUP', side: 'sell', amount: 7, priceUsd: 1.2, feeUsd: 0.1, gasUsd: 0, timestamp: new Date('2026-03-02T00:00:00Z').toISOString() },
+  });
+  assert.equal(patched.statusCode, 200);
+  const u = patched.json() as { id: string; side: string; amount: number; priceUsd: number };
+  assert.equal(u.id, o.id);
+  assert.equal(u.side, 'sell');
+  assert.equal(u.amount, 7);
+  assert.equal(u.priceUsd, 1.2);
+
+  const missing = await app.inject({
+    method: 'PATCH',
+    url: `/orders/${new mongoose.Types.ObjectId().toString()}`,
+    headers,
+    payload: { chain: 'sol', asset: 'JUP', side: 'buy', amount: 1, priceUsd: 1, feeUsd: 0, gasUsd: 0, timestamp: new Date().toISOString() },
+  });
+  assert.equal(missing.statusCode, 404);
+});

@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import type { Chain, Holding } from '@pnl/types';
 import TokenIcon from '@/components/icons/TokenIcon.vue';
+import { knownTokenColor } from '@/lib/tokenLogos';
 import { cn } from '@/lib/utils';
 import { fmtUsd } from '@/lib/format';
 
@@ -30,7 +31,8 @@ const segments = computed(() => {
       chain: h.chain,
       symbol: h.asset,
       image: h.image,
-      color: CHAIN_COLOR[h.chain],
+      // Fixed brand color (e.g. USDC light blue) wins over the chain color.
+      color: knownTokenColor(h.asset) ?? CHAIN_COLOR[h.chain],
       value: h.valueUsd,
       pct,
       len,
@@ -75,7 +77,13 @@ const center = computed(() => {
       <div class="pointer-events-none absolute inset-0 grid place-items-center">
         <div class="text-center">
           <div class="flex items-center justify-center gap-1 text-xs text-muted-foreground">
-            <TokenIcon v-if="center.chain" :chain="center.chain" :image="center.image" class="size-3" />
+            <TokenIcon
+              v-if="center.chain"
+              :chain="center.chain"
+              :asset="center.label"
+              :image="center.image"
+              class="size-3"
+            />
             {{ center.label }}
           </div>
           <div class="text-sm font-semibold tabular-nums">{{ fmtUsd(center.value) }}</div>
@@ -90,8 +98,8 @@ const center = computed(() => {
         @mouseenter="hovered = s.key"
         @mouseleave="hovered = null"
       >
-        <TokenIcon :chain="s.chain" :image="s.image" class="size-3.5" />
-        <span :class="s.chain === 'sol' ? 'text-solana' : 'text-sui'">{{ s.symbol }}</span>
+        <TokenIcon :chain="s.chain" :asset="s.symbol" :image="s.image" class="size-3.5" />
+        <span :style="{ color: s.color }">{{ s.symbol }}</span>
         <span class="text-muted-foreground">{{ (s.pct * 100).toFixed(1) }}%</span>
       </div>
     </div>

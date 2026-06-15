@@ -1,5 +1,6 @@
 import { tokenKey, type Chain, type NavPoint, type NavRange, type TokenRef } from '@pnl/types';
 import type { LedgerEntry } from './pnlEngine';
+import { adjustmentsSumAt, buildCashTimeline, usdcBalanceAt, type CashAdjustmentLite } from './cash';
 import { getCurrentPricesCached, getHistoricalPriceCached } from './prices';
 
 const DAY = 86_400_000;
@@ -44,6 +45,7 @@ function heldAt(entries: LedgerEntry[], chain: Chain, address: string, cutoffMs:
 export async function computeNavSeries(
   entries: LedgerEntry[],
   range: NavRange,
+  adjustments: CashAdjustmentLite[] = [],
   nowMs: number = Date.now(),
 ): Promise<NavPoint[]> {
   if (entries.length === 0) return [];
@@ -60,6 +62,7 @@ export async function computeNavSeries(
   for (let d = startMid; d <= todayMid; d += DAY) days.push(d);
 
   const current = await getCurrentPricesCached(tokens);
+  const cash = buildCashTimeline(entries);
 
   return Promise.all(
     days.map(async (d) => {
@@ -78,6 +81,13 @@ export async function computeNavSeries(
         const valueUsd = qty * price;
         breakdown.push({ chain: t.chain, asset: t.asset, valueUsd });
         total += valueUsd;
+      }
+
+      // USDC cash held that day — keeps the NAV total consistent with /holdings.
+      const usdc = usdcBalanceAt(cash, dayEnd) + adjustmentsSumAt(adjustments, dayEnd);
+      if (usdc > 0.01) {
+        breakdown.push({ chain: 'sol', asset: 'USDC', valueUsd: usdc });
+        total += usdc;
       }
 
       return { date: new Date(d).toISOString().slice(0, 10), totalValueUsd: total, breakdown };

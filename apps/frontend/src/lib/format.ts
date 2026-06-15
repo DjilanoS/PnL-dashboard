@@ -57,3 +57,10 @@ export function nowLocalDatetime(): string {
   const tz = d.getTimezoneOffset() * 60_000;
   return new Date(d.getTime() - tz).toISOString().slice(0, 16);
 }
+
+/** ISO timestamp → local string for an <input type="datetime-local"> value. */
+export function isoToLocalDatetime(iso: string): string {
+  const d = new Date(iso);
+  const tz = d.getTimezoneOffset() * 60_000;
+  return new Date(d.getTime() - tz).toISOString().slice(0, 16);
+}

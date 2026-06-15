@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue';
-import { Coins, LineChart, PieChart, Wallet } from '@lucide/vue';
+import { Clock, LineChart, PieChart } from '@lucide/vue';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import PnlCards from '@/components/PnlCards.vue';
-import HoldingsTable from '@/components/HoldingsTable.vue';
+import HeroPnlCard from '@/components/HeroPnlCard.vue';
+import TradeStats from '@/components/TradeStats.vue';
+import HoldingsSection from '@/components/HoldingsSection.vue';
 import PortfolioChart from '@/components/PortfolioChart.vue';
 import AllocationDonut from '@/components/AllocationDonut.vue';
+import RecentTransactions from '@/components/RecentTransactions.vue';
 import { usePortfolio } from '@/stores/usePortfolio';
-import { fmtUsd } from '@/lib/format';
 
 const { holdings, pnl, nav, fetchAll } = usePortfolio();
 
@@ -23,21 +24,22 @@ onUnmounted(() => clearInterval(refreshTimer));
 </script>
 
 <template>
-  <div class="space-y-6">
-    <div class="flex items-end justify-between">
-      <h1 class="text-2xl font-semibold tracking-tight">Dashboard</h1>
-      <Card v-if="holdings" class="gap-1 px-4 py-3 text-right">
-        <div class="flex items-center justify-end gap-1 text-xs text-muted-foreground">
-          <Wallet class="size-3.5" /> Portfolio value
-        </div>
-        <div class="text-xl font-semibold tabular-nums">{{ fmtUsd(holdings.totalValueUsd) }}</div>
+  <div class="space-y-4">
+    <!-- Row A: PnL (beams) + allocation, equal height -->
+    <div class="grid gap-4 lg:grid-cols-3">
+      <HeroPnlCard :pnl="pnl" class="lg:col-span-2" />
+
+      <Card class="lg:col-span-1">
+        <CardHeader class="pb-2">
+          <CardTitle class="flex items-center gap-2 text-sm text-muted-foreground">
+            <PieChart class="size-4" /> Allocation
+          </CardTitle>
+        </CardHeader>
+        <CardContent><AllocationDonut :holdings="holdings?.holdings ?? []" /></CardContent>
       </Card>
     </div>
 
-    <!-- Row 1: PnL cards -->
-    <PnlCards :pnl="pnl" />
-
-    <!-- Row 2: portfolio chart + allocation -->
+    <!-- Row B: portfolio value graph + recent activity -->
     <div class="grid gap-4 lg:grid-cols-3">
       <Card class="lg:col-span-2">
         <CardHeader>
@@ -45,28 +47,25 @@ onUnmounted(() => clearInterval(refreshTimer));
             <LineChart class="size-4 text-muted-foreground" /> Portfolio Value
           </CardTitle>
         </CardHeader>
-        <CardContent><PortfolioChart :points="nav?.points ?? []" /></CardContent>
+        <CardContent>
+          <PortfolioChart :points="nav?.points ?? []" :holdings="holdings?.holdings ?? []" />
+        </CardContent>
       </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle class="flex items-center gap-2">
-            <PieChart class="size-4 text-muted-foreground" /> Allocation
+
+      <Card class="lg:col-span-1">
+        <CardHeader class="pb-2">
+          <CardTitle class="flex items-center gap-2 text-sm text-muted-foreground">
+            <Clock class="size-4" /> Recent activity
           </CardTitle>
         </CardHeader>
-        <CardContent><AllocationDonut :holdings="holdings?.holdings ?? []" /></CardContent>
+        <CardContent><RecentTransactions /></CardContent>
       </Card>
     </div>
 
-    <!-- Row 3: holdings -->
-    <Card>
-      <CardHeader>
-        <CardTitle class="flex items-center gap-2">
-          <Coins class="size-4 text-muted-foreground" /> Holdings
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <HoldingsTable :holdings="holdings?.holdings ?? []" :pnl="pnl" />
-      </CardContent>
-    </Card>
+    <!-- Row C: trade stats -->
+    <TradeStats :pnl="pnl" />
+
+    <!-- Row D: holdings — cards / table toggle -->
+    <HoldingsSection :holdings="holdings?.holdings ?? []" :pnl="pnl" :points="nav?.points ?? []" />
   </div>
 </template>

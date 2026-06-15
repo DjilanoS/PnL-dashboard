@@ -14,6 +14,7 @@ import txRoutes from './modules/tx/routes';
 import walletRoutes from './modules/wallets/routes';
 import settingsRoutes from './modules/settings/routes';
 import portfolioRoutes from './modules/portfolio/routes';
+import cashRoutes from './modules/cash/routes';
 import cronRoutes from './modules/cron/routes';
 
 /**
@@ -47,6 +48,7 @@ export async function buildApp() {
   await app.register(walletRoutes, { prefix: '/wallets' });
   await app.register(settingsRoutes);
   await app.register(portfolioRoutes);
+  await app.register(cashRoutes, { prefix: '/cash' });
   await app.register(cronRoutes);
 
   // Feature modules registered in later milestones:

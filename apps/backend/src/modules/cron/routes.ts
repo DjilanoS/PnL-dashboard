@@ -3,7 +3,9 @@ import { Type } from '@sinclair/typebox';
 import { tokenKey, type Chain } from '@pnl/types';
 import { Order, toOrderDTO } from '../../models/Order';
 import { HoldingSnapshot } from '../../models/HoldingSnapshot';
+import { CashAdjustment } from '../../models/CashAdjustment';
 import { getCurrentPricesCached } from '../../services/prices';
+import { adjustmentsSumAt, buildCashTimeline, usdcBalanceAt } from '../../services/cash';
 import { ErrorSchema } from '../../schemas';
 import type { AppConfig } from '../../config/env';
 
@@ -59,6 +61,33 @@ const cronRoutes: FastifyPluginAsyncTypebox = async (app) => {
           asset: h.asset,
           valueUsd: h.qty * (prices[tokenKey(h.chain, h.address)] ?? 0),
         }));
+
+        // USDC cash: trade-derived balance + manual adjustments.
+        const entries = docs.map((d) => {
+          const o = toOrderDTO(d);
+          return {
+            chain: o.chain,
+            address: o.address,
+            asset: o.asset,
+            decimals: o.decimals,
+            name: o.name,
+            image: o.image,
+            side: o.side,
+            amount: o.amount,
+            priceUsd: o.priceUsd,
+            feeUsd: o.feeUsd,
+            gasUsd: o.gasUsd,
+            timestamp: o.timestamp,
+          };
+        });
+        const adjDocs = await CashAdjustment.find({ userId });
+        const adjustments = adjDocs.map((a) => ({
+          ms: a.timestamp.getTime(),
+          amount: Number.parseFloat(String(a.amount)),
+        }));
+        const usdc = usdcBalanceAt(buildCashTimeline(entries)) + adjustmentsSumAt(adjustments);
+        if (usdc > 0.01) breakdown.push({ asset: 'USDC', valueUsd: usdc });
+
         const totalValueUsd = breakdown.reduce((s, b) => s + b.valueUsd, 0);
         await HoldingSnapshot.updateOne({ userId, date }, { userId, date, totalValueUsd, breakdown }, { upsert: true });
       }

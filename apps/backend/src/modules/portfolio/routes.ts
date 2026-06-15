@@ -7,7 +7,16 @@ import { Wallet } from '../../models/Wallet';
 import { getUserRpc } from '../../models/User';
 import { computePnl, type LedgerEntry } from '../../services/pnlEngine';
 import { computeNavSeries } from '../../services/nav';
+import {
+  adjustmentsSumAt,
+  buildCashTimeline,
+  usdcBalanceAt,
+  USDC_SOL_MINT,
+  USDC_LOGO,
+  type CashAdjustmentLite,
+} from '../../services/cash';
 import { getCurrentPricesCached } from '../../services/prices';
+import { CashAdjustment } from '../../models/CashAdjustment';
 import { getAllWalletTokenBalances } from '../../services/balances';
 import { HoldingsResponseSchema, PnlSummarySchema, TimeseriesResponseSchema } from '../../schemas';
 import { configWithUserRpc, type AppConfig } from '../../config/env';
@@ -55,6 +64,11 @@ const portfolioRoutes: FastifyPluginAsyncTypebox = async (app) => {
     });
   }
 
+  async function loadAdjustments(userId: string): Promise<CashAdjustmentLite[]> {
+    const docs = await CashAdjustment.find({ userId: new mongoose.Types.ObjectId(userId) });
+    return docs.map((d) => ({ ms: d.timestamp.getTime(), amount: Number.parseFloat(String(d.amount)) }));
+  }
+
   app.get('/pnl/summary', { schema: { response: { 200: PnlSummarySchema } } }, async (req) => {
     const entries = await loadEntries(req.user.sub);
     const prices = await getCurrentPricesCached(tokensOf(entries));
@@ -78,25 +92,61 @@ const portfolioRoutes: FastifyPluginAsyncTypebox = async (app) => {
     );
 
     const summary = computePnl(entries, prices);
-    const held = summary.perAsset.filter((a) => a.held > 1e-9);
-    const totalValueUsd = held.reduce((s, a) => s + a.marketValue, 0);
+    // USDC cash: trade-derived balance (sells refill, buys spend) + manual
+    // deposit/withdrawal adjustments. Part of portfolio value, but no PnL.
+    const usdc =
+      usdcBalanceAt(buildCashTimeline(entries)) + adjustmentsSumAt(await loadAdjustments(req.user.sub));
+    // Keep every traded asset as a row — fully-sold positions stay visible with
+    // quantity 0 so their realized PnL, avg buy and avg sell remain on the
+    // dashboard. Held crypto value + USDC cash make up the portfolio total.
+    const totalValueUsd = summary.perAsset.reduce((s, a) => s + a.marketValue, 0) + usdc;
 
-    const holdings: Holding[] = held.map((a) => ({
-      chain: a.chain,
-      address: a.address,
-      asset: a.asset,
-      name: a.name,
-      image: a.image,
-      decimals: a.decimals,
-      walletBalance: balances.get(tokenKey(a.chain, a.address)) ?? null,
-      ledgerQty: a.held,
-      avgCost: a.avgCost,
-      costBasis: a.costBasis,
-      currentPrice: a.currentPrice,
-      valueUsd: a.marketValue,
-      unrealized: a.unrealized,
-      allocation: totalValueUsd > 0 ? a.marketValue / totalValueUsd : 0,
-    }));
+    const holdings: Holding[] = summary.perAsset.map((a) => {
+      const closed = a.held <= 1e-9;
+      return {
+        chain: a.chain,
+        address: a.address,
+        asset: a.asset,
+        name: a.name,
+        image: a.image,
+        decimals: a.decimals,
+        walletBalance: balances.get(tokenKey(a.chain, a.address)) ?? null,
+        ledgerQty: a.held,
+        // avgCost collapses to 0 once a position is fully closed; fall back to
+        // the lifetime average buy so the cost stays visible on zero-qty rows.
+        avgCost: closed ? a.avgBuy : a.avgCost,
+        costBasis: a.costBasis,
+        currentPrice: a.currentPrice,
+        valueUsd: a.marketValue,
+        realized: a.realized,
+        unrealized: a.unrealized,
+        allocation: totalValueUsd > 0 ? a.marketValue / totalValueUsd : 0,
+      };
+    });
+
+    // Synthetic USDC cash position (price $1, no PnL) so sold value isn't lost.
+    if (usdc > 0.01) {
+      holdings.push({
+        chain: 'sol',
+        address: USDC_SOL_MINT,
+        asset: 'USDC',
+        name: 'USD Coin',
+        image: USDC_LOGO,
+        decimals: 6,
+        walletBalance: null,
+        ledgerQty: usdc,
+        avgCost: 1,
+        costBasis: usdc,
+        currentPrice: 1,
+        valueUsd: usdc,
+        realized: 0,
+        unrealized: 0,
+        allocation: totalValueUsd > 0 ? usdc / totalValueUsd : 0,
+      });
+    }
+
+    // Open positions first (by value), then closed ones (by realized PnL).
+    holdings.sort((x, y) => y.valueUsd - x.valueUsd || y.realized - x.realized);
 
     return { holdings, totalValueUsd };
   });
@@ -111,8 +161,11 @@ const portfolioRoutes: FastifyPluginAsyncTypebox = async (app) => {
     },
     async (req) => {
       const range: NavRange = req.query.range ?? '30d';
-      const entries = await loadEntries(req.user.sub);
-      const points = await computeNavSeries(entries, range);
+      const [entries, adjustments] = await Promise.all([
+        loadEntries(req.user.sub),
+        loadAdjustments(req.user.sub),
+      ]);
+      const points = await computeNavSeries(entries, range, adjustments);
       return { range, points };
     },
   );

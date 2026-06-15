@@ -7,7 +7,7 @@ import {
   useVueTable,
   type SortingState,
 } from '@tanstack/vue-table';
-import { ArrowUpDown, ExternalLink, Trash2 } from '@lucide/vue';
+import { ArrowUpDown, ExternalLink, Pencil, Trash2 } from '@lucide/vue';
 import type { Order } from '@pnl/types';
 import {
   Table,
@@ -20,11 +20,18 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import TokenIcon from '@/components/icons/TokenIcon.vue';
+import { chainColor } from '@/composables/useTokenColor';
+import { knownTokenColor } from '@/lib/tokenLogos';
 import { cn } from '@/lib/utils';
 import { fmtDate, fmtNum, fmtUsd, shortSig } from '@/lib/format';
 
 const props = defineProps<{ orders: Order[] }>();
-const emit = defineEmits<{ delete: [id: string] }>();
+const emit = defineEmits<{ delete: [id: string]; edit: [order: Order] }>();
+
+// Per-token accent (USDC light blue, etc.), falling back to the chain color.
+function assetColor(o: Order): string {
+  return knownTokenColor(o.asset) ?? chainColor(o.chain);
+}
 
 function explorerUrl(o: Order): string | null {
   if (!o.txSignature) return null;
@@ -91,9 +98,14 @@ const table = useVueTable({
           <TableCell>
             <Badge
               variant="outline"
-              :class="cn('gap-1', row.original.chain === 'sol' ? 'border-solana/40 text-solana' : 'border-sui/40 text-sui')"
+              class="gap-1 border-0"
+              :style="{ color: assetColor(row.original) }"
             >
-              <TokenIcon :chain="row.original.chain" :image="row.original.image" />
+              <TokenIcon
+                :chain="row.original.chain"
+                :asset="row.original.asset"
+                :image="row.original.image"
+              />
               {{ row.original.asset }}
             </Badge>
           </TableCell>
@@ -118,8 +130,23 @@ const table = useVueTable({
             </a>
             <span v-else class="text-xs capitalize text-muted-foreground">{{ row.original.source }}</span>
           </TableCell>
-          <TableCell class="text-right">
-            <Button variant="ghost" size="icon" class="size-8" @click="emit('delete', row.original.id)">
+          <TableCell class="text-right whitespace-nowrap">
+            <Button
+              variant="ghost"
+              size="icon"
+              class="size-8"
+              aria-label="Edit order"
+              @click="emit('edit', row.original)"
+            >
+              <Pencil class="size-4 text-muted-foreground" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="size-8"
+              aria-label="Delete order"
+              @click="emit('delete', row.original.id)"
+            >
               <Trash2 class="size-4 text-muted-foreground" />
             </Button>
           </TableCell>
