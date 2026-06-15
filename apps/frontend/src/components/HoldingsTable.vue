@@ -40,6 +40,7 @@ function tone(n: number): string {
           <TableHead class="text-right">Avg sell</TableHead>
           <TableHead class="text-right">Price</TableHead>
           <TableHead class="text-right">Value</TableHead>
+          <TableHead class="text-right">Realized</TableHead>
           <TableHead class="text-right">Unrealized</TableHead>
           <TableHead class="text-right">Alloc.</TableHead>
         </TableRow>
@@ -47,11 +48,8 @@ function tone(n: number): string {
       <TableBody>
         <TableRow v-for="r in rows" :key="`${r.chain}:${r.address}`">
           <TableCell>
-            <Badge
-              variant="outline"
-              :class="cn('gap-1', r.chain === 'sol' ? 'border-solana/40 text-solana' : 'border-sui/40 text-sui')"
-            >
-              <TokenIcon :chain="r.chain" :image="r.image" />
+            <Badge variant="outline" :class="cn('gap-1 border-0', r.chain === 'sol' ? 'text-solana' : 'text-sui')">
+              <TokenIcon :chain="r.chain" :asset="r.asset" :image="r.image" />
               {{ r.asset }}
             </Badge>
           </TableCell>
@@ -61,6 +59,9 @@ function tone(n: number): string {
           <TableCell class="text-right tabular-nums">{{ r.avgSell > 0 ? fmtUsd(r.avgSell, 2) : '—' }}</TableCell>
           <TableCell class="text-right tabular-nums">{{ fmtUsd(r.currentPrice, 2) }}</TableCell>
           <TableCell class="text-right tabular-nums">{{ fmtUsd(r.valueUsd) }}</TableCell>
+          <TableCell :class="cn('text-right tabular-nums', tone(r.realized))">
+            {{ r.realized !== 0 ? fmtSignedUsd(r.realized) : '—' }}
+          </TableCell>
           <TableCell :class="cn('text-right tabular-nums', tone(r.unrealized))">
             {{ fmtSignedUsd(r.unrealized) }}
           </TableCell>
@@ -69,7 +70,7 @@ function tone(n: number): string {
           </TableCell>
         </TableRow>
         <TableRow v-if="rows.length === 0">
-          <TableCell colspan="9" class="py-12 text-center text-sm text-muted-foreground">
+          <TableCell colspan="10" class="py-12 text-center text-sm text-muted-foreground">
             No holdings yet. Add orders to see your positions.
           </TableCell>
         </TableRow>

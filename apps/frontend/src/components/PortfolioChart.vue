@@ -12,38 +12,50 @@ import {
   type LineData,
   type Time,
 } from 'lightweight-charts';
-import type { Chain, NavPoint } from '@pnl/types';
+import type { Chain, Holding, NavPoint } from '@pnl/types';
 import { useTheme } from '@/composables/useTheme';
+import { chainColor, extractTokenColor } from '@/composables/useTokenColor';
+import { knownTokenColor, knownTokenLogo } from '@/lib/tokenLogos';
 import { fmtUsd } from '@/lib/format';
 
-const props = defineProps<{ points: NavPoint[] }>();
+const props = defineProps<{ points: NavPoint[]; holdings: Holding[] }>();
 const { mode } = useTheme();
+
+// How many holdings are shown by default; the rest are added but hidden and can
+// be toggled on via the legend.
+const TOP_N = 5;
 
 const container = ref<HTMLDivElement | null>(null);
 let chart: IChartApi | null = null;
 let total: ISeriesApi<'Area'> | null = null;
-let sol: ISeriesApi<'Line'> | null = null;
-let sui: ISeriesApi<'Line'> | null = null;
+// Per-holding line series, keyed by `${chain}:${asset}`.
+const lineSeries = new Map<string, ISeriesApi<'Line'>>();
+const seriesColor = new Map<string, string>();
+// Explicit user toggles survive data refreshes (otherwise top-N would reset).
+const visibilityOverride = new Map<string, boolean>();
 let ro: ResizeObserver | null = null;
 
 const tooltip = reactive({ visible: false, left: 0, top: 0, date: '', value: '' });
 
-// Clickable legend — toggles each series' visibility. The swatch colors follow
-// the CSS vars in the DOM; the canvas colors are applied in applyTheme (since
-// lightweight-charts renders to canvas and ignores CSS variables).
-const legend = reactive([
-  { key: 'total', label: 'Total', cssVar: '--nav', visible: true },
-  { key: 'sol', label: 'Solana', cssVar: '--solana', visible: true },
-  { key: 'sui', label: 'Sui', cssVar: '--sui', visible: true },
-]);
+interface LegendItem {
+  key: string;
+  label: string;
+  color: string;
+  visible: boolean;
+}
+const legend = ref<LegendItem[]>([]);
 
-function seriesFor(key: string): ISeriesApi<'Area'> | ISeriesApi<'Line'> | null {
-  return key === 'total' ? total : key === 'sol' ? sol : sui;
+function isVisible(key: string, fallback: boolean): boolean {
+  const o = visibilityOverride.get(key);
+  return o === undefined ? fallback : o;
 }
 
-function toggle(item: (typeof legend)[number]): void {
-  item.visible = !item.visible;
-  seriesFor(item.key)?.applyOptions({ visible: item.visible });
+function toggle(item: LegendItem): void {
+  const next = !item.visible;
+  item.visible = next;
+  visibilityOverride.set(item.key, next);
+  if (item.key === 'total') total?.applyOptions({ visible: next });
+  else lineSeries.get(item.key)?.applyOptions({ visible: next });
 }
 
 function timeToDate(t: Time): Date {
@@ -79,18 +91,113 @@ function totalData(points: NavPoint[]): AreaData<Time>[] {
   return points.map((p) => ({ time: p.date as Time, value: p.totalValueUsd }));
 }
 
-// Sum every token on a chain so custom tokens are included, not just the native coin.
-function chainData(points: NavPoint[], chain: Chain): LineData<Time>[] {
+// Per-holding series. NOTE: `breakdown` keys by (chain, asset) symbol — NOT
+// address — so two distinct mints sharing a ticker collapse into one summed
+// line here (the address-keyed HoldingsTable stays exact). Summing mirrors the
+// chain-aggregation pattern this chart used before.
+function lineData(points: NavPoint[], chain: Chain, asset: string): LineData<Time>[] {
   return points.map((p) => ({
     time: p.date as Time,
-    value: p.breakdown.filter((b) => b.chain === chain).reduce((s, b) => s + b.valueUsd, 0),
+    value: p.breakdown
+      .filter((b) => b.chain === chain && b.asset === asset)
+      .reduce((s, b) => s + b.valueUsd, 0),
   }));
 }
 
+interface AggToken {
+  key: string;
+  chain: Chain;
+  asset: string;
+  value: number;
+  image?: string;
+}
+
+// Currently-held tokens, deduped by (chain, asset) and sorted by value desc.
+function aggregate(holdings: Holding[]): AggToken[] {
+  const byKey = new Map<string, AggToken>();
+  for (const h of holdings) {
+    if (h.valueUsd <= 0) continue; // closed positions don't get a chart line
+    const key = `${h.chain}:${h.asset}`;
+    const cur = byKey.get(key);
+    if (cur) cur.value += h.valueUsd;
+    else
+      byKey.set(key, {
+        key,
+        chain: h.chain,
+        asset: h.asset,
+        value: h.valueUsd,
+        image: h.image || knownTokenLogo(h.asset),
+      });
+  }
+  return [...byKey.values()].sort((a, b) => b.value - a.value);
+}
+
+// Incrementally reconcile the per-holding line series with the current holdings
+// + points, preserving existing series (and crosshair state) across refreshes.
+function syncSeries(): void {
+  if (!chart || !total) return;
+  total.setData(totalData(props.points));
+  total.applyOptions({ visible: isVisible('total', true) });
+
+  const agg = aggregate(props.holdings);
+  const nextKeys = new Set(agg.map((t) => t.key));
+
+  for (const [key, s] of lineSeries) {
+    if (!nextKeys.has(key)) {
+      chart.removeSeries(s);
+      lineSeries.delete(key);
+      seriesColor.delete(key);
+    }
+  }
+
+  const items: LegendItem[] = [
+    { key: 'total', label: 'Total', color: cssVar('--nav', '#f59e0b'), visible: isVisible('total', true) },
+  ];
+
+  agg.forEach((t, i) => {
+    const visible = isVisible(t.key, i < TOP_N);
+    let s = lineSeries.get(t.key);
+    if (!s) {
+      const known = knownTokenColor(t.asset);
+      const color = known ?? chainColor(t.chain);
+      s = chart!.addSeries(LineSeries, {
+        color,
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        visible,
+      });
+      lineSeries.set(t.key, s);
+      seriesColor.set(t.key, color);
+      // Upgrade to the logo's dominant color when it resolves (unless a fixed
+      // brand color applies, e.g. USDC). Chain color shows until then.
+      if (!known && t.image) {
+        extractTokenColor(t.image)
+          .then((hex) => {
+            seriesColor.set(t.key, hex);
+            lineSeries.get(t.key)?.applyOptions({ color: hex });
+            const li = legend.value.find((l) => l.key === t.key);
+            if (li) li.color = hex;
+          })
+          .catch(() => {
+            /* keep chain color */
+          });
+      }
+    } else {
+      s.applyOptions({ visible });
+    }
+    s.setData(lineData(props.points, t.chain, t.asset));
+    items.push({ key: t.key, label: t.asset, color: seriesColor.get(t.key) ?? chainColor(t.chain), visible });
+  });
+
+  legend.value = items;
+}
+
 // lightweight-charts renders to canvas and does NOT follow CSS variables, so we
-// read the theme manually and re-apply on toggle.
+// read the theme manually and re-apply on toggle. Per-holding line colors are
+// brand colors (theme-independent), so only the total/grid need re-theming.
 function applyTheme(): void {
-  if (!chart || !total || !sol || !sui) return;
+  if (!chart || !total) return;
   const dark = mode.value === 'dark';
   const nav = cssVar('--nav', '#f59e0b');
   const text = dark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.55)';
@@ -102,13 +209,9 @@ function applyTheme(): void {
     rightPriceScale: { borderColor: grid },
     timeScale: { borderColor: grid },
   });
-  total.applyOptions({
-    lineColor: nav,
-    topColor: hexAlpha(nav, 0.4),
-    bottomColor: hexAlpha(nav, 0.0),
-  });
-  sol.applyOptions({ color: cssVar('--solana', '#9945ff') });
-  sui.applyOptions({ color: cssVar('--sui', '#4da2ff') });
+  total.applyOptions({ lineColor: nav, topColor: hexAlpha(nav, 0.4), bottomColor: hexAlpha(nav, 0.0) });
+  const li = legend.value.find((l) => l.key === 'total');
+  if (li) li.color = nav;
 }
 
 onMounted(() => {
@@ -129,11 +232,7 @@ onMounted(() => {
     },
   });
   total = chart.addSeries(AreaSeries, { lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-  sol = chart.addSeries(LineSeries, { lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-  sui = chart.addSeries(LineSeries, { lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-  total.setData(totalData(props.points));
-  sol.setData(chainData(props.points, 'sol'));
-  sui.setData(chainData(props.points, 'sui'));
+  syncSeries();
   applyTheme();
   chart.timeScale().fitContent();
 
@@ -186,15 +285,7 @@ onMounted(() => {
   });
 });
 
-watch(
-  () => props.points,
-  (pts) => {
-    total?.setData(totalData(pts));
-    sol?.setData(chainData(pts, 'sol'));
-    sui?.setData(chainData(pts, 'sui'));
-    chart?.timeScale().fitContent();
-  },
-);
+watch([() => props.points, () => props.holdings], syncSeries);
 watch(mode, applyTheme);
 
 onBeforeUnmount(() => {
@@ -203,8 +294,8 @@ onBeforeUnmount(() => {
   chart?.remove();
   chart = null;
   total = null;
-  sol = null;
-  sui = null;
+  lineSeries.clear();
+  seriesColor.clear();
 });
 </script>
 
@@ -219,7 +310,7 @@ onBeforeUnmount(() => {
         :class="item.visible ? '' : 'opacity-40'"
         @click="toggle(item)"
       >
-        <span class="size-2.5 rounded-full" :style="{ backgroundColor: `var(${item.cssVar})` }" />
+        <span class="size-2.5 rounded-full" :style="{ backgroundColor: item.color }" />
         <span :class="item.visible ? '' : 'line-through'">{{ item.label }}</span>
       </button>
     </div>

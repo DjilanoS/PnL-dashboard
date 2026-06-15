@@ -82,6 +82,22 @@ export const ManualOrderSchema = Type.Object({
   timestamp: Type.String(),
 });
 
+/** Cash adjustment DTO (matches @pnl/types CashAdjustment). */
+export const CashAdjustmentDtoSchema = Type.Object({
+  id: Type.String(),
+  amount: Type.Number(),
+  note: Type.Optional(Type.String()),
+  timestamp: Type.String(),
+  createdAt: Type.String(),
+});
+
+/** Body for creating a cash adjustment (signed amount; + deposit, − withdrawal). */
+export const CashAdjustmentInputSchema = Type.Object({
+  amount: Type.Number(),
+  note: Type.Optional(Type.String()),
+  timestamp: Type.Optional(Type.String()),
+});
+
 /** Wallet DTO (matches @pnl/types WalletDTO). */
 export const WalletDtoSchema = Type.Object({
   id: Type.String(),
@@ -166,6 +182,7 @@ export const HoldingSchema = Type.Object({
   costBasis: Type.Number(),
   currentPrice: Type.Number(),
   valueUsd: Type.Number(),
+  realized: Type.Number(),
   unrealized: Type.Number(),
   allocation: Type.Number(),
 });

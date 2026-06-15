@@ -25,6 +25,8 @@ export interface Holding {
   currentPrice: number;
   /** ledgerQty * currentPrice. */
   valueUsd: number;
+  /** Realized PnL from all sells of this token so far, in USD. */
+  realized: number;
   /** (currentPrice - avgCost) * ledgerQty. */
   unrealized: number;
   /** Share of total portfolio value (0..1). */

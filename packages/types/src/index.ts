@@ -2,6 +2,7 @@ export type * from './order';
 export type * from './pnl';
 export type * from './holdings';
 export type * from './nav';
+export type * from './cash';
 export type * from './auth';
 export type * from './wallets';
 export type * from './settings';

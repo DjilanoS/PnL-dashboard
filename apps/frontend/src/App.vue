@@ -2,7 +2,7 @@
 import { onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { ConfigProvider } from 'reka-ui';
-import AppHeader from '@/components/AppHeader.vue';
+import AppShell from '@/components/AppShell.vue';
 import { Toaster } from '@/components/ui/sonner';
 import { useAuth } from '@/stores/useAuth';
 
@@ -25,10 +25,10 @@ onMounted(() => {
        compensation) when an overlay opens, which was squishing the layout. -->
   <ConfigProvider :scroll-body="false">
     <div class="min-h-screen bg-background text-foreground antialiased">
-      <AppHeader v-if="!route.meta.public" />
-      <main :class="route.meta.public ? '' : 'mx-auto w-full max-w-7xl px-4 py-6 md:px-6'">
+      <RouterView v-if="route.meta.public" />
+      <AppShell v-else>
         <RouterView />
-      </main>
+      </AppShell>
       <Toaster :rich-colors="true" position="top-right" theme="dark" />
     </div>
   </ConfigProvider>

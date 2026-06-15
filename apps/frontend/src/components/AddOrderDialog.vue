@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import { toast } from 'vue-sonner';
 import { Check, Loader2, Search } from '@lucide/vue';
 import {
   nativeTokenAddress,
   type Chain,
+  type Order,
   type OrderSide,
   type OwnedAsset,
   type ParsedOrderPreview,
@@ -27,14 +28,18 @@ import { Label } from '@/components/ui/label';
 import ChainToggle from '@/components/ChainToggle.vue';
 import TokenIcon from '@/components/icons/TokenIcon.vue';
 import { cn } from '@/lib/utils';
-import { fmtDate, fmtNum, fmtUsd, nowLocalDatetime } from '@/lib/format';
+import { fmtDate, fmtNum, fmtUsd, isoToLocalDatetime, nowLocalDatetime } from '@/lib/format';
 import { useOrders } from '@/stores/useOrders';
 import { useWallets } from '@/stores/useWallets';
 import { useTxImport } from '@/composables/useTxImport';
 
-const emit = defineEmits<{ created: [] }>();
+const props = defineProps<{ editOrder?: Order | null }>();
+const emit = defineEmits<{ created: []; updated: [] }>();
 
-const open = ref(false);
+// `open` is a model so the dialog can be either self-triggered (Add) or
+// controlled by a parent (Edit, opened from a table row).
+const open = defineModel<boolean>('open', { default: false });
+const editMode = computed(() => !!props.editOrder);
 const tx = useTxImport();
 const wallets = useWallets();
 
@@ -164,10 +169,39 @@ function resetAll(): void {
   preview.value = null;
 }
 
-watch(open, (isOpen) => {
-  if (isOpen) void wallets.fetchWallets();
-  else resetAll();
-});
+// Pre-fill the Manual form from an existing order (edit mode). nextTick lets the
+// chainManual watcher (which clears the token) run first, so it doesn't wipe our token.
+async function prefillFromOrder(o: Order): Promise<void> {
+  chainManual.value = o.chain;
+  await nextTick();
+  manualToken.value = {
+    chain: o.chain,
+    address: o.address,
+    symbol: o.asset,
+    name: o.name,
+    image: o.image,
+    decimals: o.decimals,
+  };
+  tokenAddrInput.value = '';
+  side.value = o.side;
+  amount.value = String(o.amount);
+  price.value = String(o.priceUsd);
+  fee.value = String(o.feeUsd ?? 0);
+  date.value = isoToLocalDatetime(o.timestamp);
+}
+
+watch(
+  open,
+  (isOpen) => {
+    if (isOpen) {
+      if (props.editOrder) void prefillFromOrder(props.editOrder);
+      else void wallets.fetchWallets();
+    } else {
+      resetAll();
+    }
+  },
+  { immediate: true },
+);
 
 function errMsg(e: unknown, fallback: string): string {
   return e instanceof Error ? e.message : fallback;
@@ -199,27 +233,34 @@ async function submitManual(): Promise<void> {
   if (!(p >= 0)) return void toast.error('Enter a valid USD price');
 
   const t = manualTokenEffective.value;
+  const input = {
+    chain: t.chain,
+    address: t.address,
+    asset: t.symbol,
+    decimals: t.decimals,
+    name: t.name,
+    image: t.image,
+    side: side.value,
+    amount: a,
+    priceUsd: p,
+    feeUsd: Number.isFinite(f) ? f : 0,
+    gasUsd: 0,
+    timestamp: new Date(date.value).toISOString(),
+  };
   submitting.value = true;
   try {
-    await useOrders().addOrder({
-      chain: t.chain,
-      address: t.address,
-      asset: t.symbol,
-      decimals: t.decimals,
-      name: t.name,
-      image: t.image,
-      side: side.value,
-      amount: a,
-      priceUsd: p,
-      feeUsd: Number.isFinite(f) ? f : 0,
-      gasUsd: 0,
-      timestamp: new Date(date.value).toISOString(),
-    });
-    toast.success('Order added');
-    emit('created');
+    if (props.editOrder) {
+      await useOrders().updateOrder(props.editOrder.id, input);
+      toast.success('Order updated');
+      emit('updated');
+    } else {
+      await useOrders().addOrder(input);
+      toast.success('Order added');
+      emit('created');
+    }
     open.value = false;
   } catch (e) {
-    toast.error(errMsg(e, 'Failed to add order'));
+    toast.error(errMsg(e, props.editOrder ? 'Failed to update order' : 'Failed to add order'));
   } finally {
     submitting.value = false;
   }
@@ -346,12 +387,18 @@ async function importLink(): Promise<void> {
     </DialogTrigger>
     <DialogContent class="sm:max-w-md">
       <DialogHeader>
-        <DialogTitle>Add order</DialogTitle>
-        <DialogDescription>Scan the tokens you hold, add one by address, or import on-chain trades.</DialogDescription>
+        <DialogTitle>{{ editMode ? 'Edit order' : 'Add order' }}</DialogTitle>
+        <DialogDescription>
+          {{
+            editMode
+              ? 'Update this order’s details.'
+              : 'Scan the tokens you hold, add one by address, or import on-chain trades.'
+          }}
+        </DialogDescription>
       </DialogHeader>
 
-      <Tabs default-value="scan" class="w-full">
-        <TabsList class="grid w-full grid-cols-4">
+      <Tabs :default-value="editMode ? 'manual' : 'scan'" class="w-full">
+        <TabsList v-if="!editMode" class="grid w-full grid-cols-4">
           <TabsTrigger value="scan">Scan</TabsTrigger>
           <TabsTrigger value="manual">Manual</TabsTrigger>
           <TabsTrigger value="swaps">Swaps</TabsTrigger>
@@ -518,7 +565,7 @@ async function importLink(): Promise<void> {
           </div>
 
           <Button class="w-full" :disabled="submitting" @click="submitManual">
-            {{ submitting ? 'Adding…' : 'Add order' }}
+            {{ editMode ? (submitting ? 'Saving…' : 'Save changes') : submitting ? 'Adding…' : 'Add order' }}
           </Button>
         </TabsContent>
 
