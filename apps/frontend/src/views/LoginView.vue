@@ -45,9 +45,9 @@ watch(
   <div class="grid min-h-screen place-items-center px-4">
     <Card class="w-full max-w-md border-border/60">
       <CardHeader class="space-y-2 text-center">
-        <CardTitle class="text-3xl font-bold tracking-tight">
-          <span class="text-gradient-solana">Sol</span><span class="text-gradient-sui">Sui</span>
-          <span class="text-foreground"> PnL</span>
+        <CardTitle class="flex items-center justify-center gap-2 text-3xl font-bold tracking-tight">
+          <img src="@/assets/logo.png" alt="Gainly" class="h-8 w-8" />
+          <span class="text-foreground">Gainly</span>
         </CardTitle>
         <CardDescription> Sign in with Discord to view your portfolio PnL. </CardDescription>
       </CardHeader>
