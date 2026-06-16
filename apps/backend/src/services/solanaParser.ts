@@ -62,12 +62,33 @@ export function solDeltaForUser(tx: HeliusTx, user: string): number {
   return sol;
 }
 
+/**
+ * True if the user gained or lost a non-wSOL SPL token in this tx — the
+ * counter-asset leg of a swap. Recent-swap scans no longer filter on Helius's
+ * `type=SWAP` label (it tags most real swaps, e.g. Jupiter routes, as UNKNOWN
+ * and drops them), so we require a token leg here to tell a swap apart from a
+ * plain SOL transfer, which would otherwise be logged as a trade.
+ */
+export function userSwappedToken(tx: HeliusTx, user: string): boolean {
+  for (const a of tx.accountData ?? []) {
+    for (const t of a.tokenBalanceChanges ?? []) {
+      if (t.userAccount !== user) continue;
+      if (t.mint === WSOL_MINT) continue; // wSOL is just SOL, not the counter-asset
+      if (Number(t.rawTokenAmount.tokenAmount) !== 0) return true;
+    }
+  }
+  return false;
+}
+
 /** Turn a Helius tx into a SOL buy/sell preview for the user, or null. */
 export async function parseSolanaTx(tx: HeliusTx, user: string): Promise<ParsedOrderPreview | null> {
   if (!user) return null;
   const delta = solDeltaForUser(tx, user);
   // Recent-swap scans exclude dust trades of 0.01 SOL and lower.
   if (Math.abs(delta) <= SCAN_MIN_SOL) return null;
+  // Require a counter-asset token leg so plain SOL transfers (which also move
+  // SOL but aren't trades) are skipped now that we no longer rely on type=SWAP.
+  if (!userSwappedToken(tx, user)) return null;
 
   const side = delta > 0 ? 'buy' : 'sell';
   const amount = Math.abs(delta);
@@ -225,13 +246,19 @@ export async function parseSolanaSignature(
 export async function scanSolana(
   config: AppConfig,
   user: string,
-  limit = 50,
+  limit = 100,
 ): Promise<ParsedOrderPreview[]> {
   // Recent-swap scanning uses the operator's Helius Enhanced Transactions API
   // (not the user's custom RPC, which is a plain JSON-RPC endpoint).
   if (!heliusApiKey(config)) throw new Error('HELIUS_API_KEY is not configured');
   if (!user) throw new Error('No wallet address provided to scan');
-  const url = `${HELIUS_API_BASE}/addresses/${user}/transactions?api-key=${heliusApiKey(config)}&type=SWAP&limit=${limit}`;
+  // Deliberately NOT filtering on `type=SWAP`: Helius misclassifies most real
+  // swaps (Jupiter and other aggregator routes come back as UNKNOWN), so that
+  // filter silently drops them. Instead we fetch recent txs and detect trades
+  // ourselves via the SOL delta + counter-asset token leg (see parseSolanaTx),
+  // mirroring how the single-tx (link) path works. Fetch a few extra to offset
+  // the non-swap txs we filter out client-side.
+  const url = `${HELIUS_API_BASE}/addresses/${user}/transactions?api-key=${heliusApiKey(config)}&limit=${limit}`;
   const res = await fetch(url);
   if (!res.ok) await heliusError(res);
   const txs = (await res.json()) as HeliusTx[];

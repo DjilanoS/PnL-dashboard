@@ -4,6 +4,7 @@ import type { SuiTransactionBlockResponse } from '@mysten/sui/jsonRpc';
 import {
   extractSolanaSignature,
   solDeltaForUser,
+  userSwappedToken,
   type HeliusTx,
 } from './solanaParser';
 import { extractSuiDigest, suiDeltaForUser } from './suiParser';
@@ -52,6 +53,66 @@ test('solDeltaForUser: sell = negative SOL', () => {
     accountData: [{ account: user, nativeBalanceChange: -3 * 1e9 - 5000, tokenBalanceChanges: [] }],
   };
   assert.ok(Math.abs(solDeltaForUser(tx, user) + 3) < 1e-9);
+});
+
+const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const WSOL_MINT = 'So11111111111111111111111111111111111111112';
+
+test('userSwappedToken: true when a non-wSOL token leg moves for the user', () => {
+  const user = 'USERwallet1111111111111111111111111111111111';
+  // SOL -> USDC swap: the user receives USDC (the counter-asset leg).
+  const tx: HeliusTx = {
+    signature: SOL_SIG,
+    timestamp: 1_700_000_000,
+    type: 'UNKNOWN', // Helius often mislabels real swaps as UNKNOWN
+    fee: 5000,
+    feePayer: user,
+    accountData: [
+      { account: user, nativeBalanceChange: -3 * 1e9, tokenBalanceChanges: [] },
+      {
+        account: 'usdcAta',
+        nativeBalanceChange: 0,
+        tokenBalanceChanges: [
+          { userAccount: user, mint: USDC_MINT, rawTokenAmount: { tokenAmount: '420000000', decimals: 6 } },
+        ],
+      },
+    ],
+  };
+  assert.equal(userSwappedToken(tx, user), true);
+});
+
+test('userSwappedToken: false for a plain SOL transfer (no token leg)', () => {
+  const user = 'USERwallet1111111111111111111111111111111111';
+  const tx: HeliusTx = {
+    signature: SOL_SIG,
+    timestamp: 1_700_000_000,
+    type: 'TRANSFER',
+    fee: 5000,
+    feePayer: user,
+    accountData: [{ account: user, nativeBalanceChange: -2 * 1e9, tokenBalanceChanges: [] }],
+  };
+  assert.equal(userSwappedToken(tx, user), false);
+});
+
+test('userSwappedToken: false when only wSOL moves (wSOL is just SOL)', () => {
+  const user = 'USERwallet1111111111111111111111111111111111';
+  const tx: HeliusTx = {
+    signature: SOL_SIG,
+    timestamp: 1_700_000_000,
+    type: 'UNKNOWN',
+    fee: 5000,
+    feePayer: user,
+    accountData: [
+      {
+        account: 'wsolAta',
+        nativeBalanceChange: 0,
+        tokenBalanceChanges: [
+          { userAccount: user, mint: WSOL_MINT, rawTokenAmount: { tokenAmount: '1000000000', decimals: 9 } },
+        ],
+      },
+    ],
+  };
+  assert.equal(userSwappedToken(tx, user), false);
 });
 
 test('suiDeltaForUser: sell adds gas back, negative SUI', () => {
