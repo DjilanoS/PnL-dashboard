@@ -39,6 +39,8 @@ let beamMesh: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial> | null = nu
 let directionalLight: THREE.DirectionalLight | null = null;
 let ambientLight: THREE.AmbientLight | null = null;
 let animationId: number | null = null;
+// Latest requested light color; the render loop eases the live light toward it.
+let targetLightColor: THREE.Color | null = null;
 
 type UniformValue = THREE.IUniform<unknown> | unknown;
 
@@ -330,6 +332,7 @@ const initThreeJS = () => {
   scene.add(group);
 
   directionalLight = new THREE.DirectionalLight(new THREE.Color(props.lightColor), 1);
+  targetLightColor = new THREE.Color(props.lightColor);
   directionalLight.position.set(0, 3, 10);
   const shadowCamera = directionalLight.shadow.camera as THREE.OrthographicCamera;
   shadowCamera.top = 24;
@@ -366,6 +369,12 @@ const initThreeJS = () => {
 
     if (beamMesh && beamMesh.material) {
       beamMesh.material.uniforms.time.value += 0.1 * 0.016;
+    }
+
+    // Ease the beam light toward the latest target color so PnL sign / loading
+    // transitions fade in instead of snapping to the new color.
+    if (directionalLight && targetLightColor) {
+      directionalLight.color.lerp(targetLightColor, 0.005);
     }
 
     if (renderer && scene && camera) {
@@ -418,7 +427,6 @@ watch(
     props.beamWidth,
     props.beamHeight,
     props.beamNumber,
-    props.lightColor,
     props.speed,
     props.noiseIntensity,
     props.scale,
@@ -428,6 +436,16 @@ watch(
     initThreeJS();
   },
   { deep: true }
+);
+
+// Color changes only retarget the directional light and ease in via the render
+// loop (see animate) — no full scene rebuild, so the transition stays smooth.
+watch(
+  () => props.lightColor,
+  (color) => {
+    if (targetLightColor) targetLightColor.set(color);
+    else targetLightColor = new THREE.Color(color);
+  }
 );
 
 onMounted(() => {
