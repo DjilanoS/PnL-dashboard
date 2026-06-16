@@ -50,6 +50,11 @@ const authRoutes: FastifyPluginAsyncTypebox = async (app) => {
       ]);
       if (!user) return reply.code(401).send({ error: 'unauthorized' });
 
+      // Slide the session forward: an actively-used app re-hydrates via /auth/me,
+      // so mint a fresh JWT each call to reset the 7-day expiry. Returned in a
+      // header (not the body) to keep the MeResponse contract identity-only.
+      reply.header('x-refreshed-token', await reply.jwtSign({ sub: String(user._id) }));
+
       return {
         user: {
           discordId: user.discordId ?? '',

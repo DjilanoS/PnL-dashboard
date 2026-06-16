@@ -24,6 +24,13 @@ export function onUnauthorized(handler: () => void): () => void {
   return () => unauthorizedHandlers.delete(handler);
 }
 
+/** Listeners notified when an endpoint hands back a refreshed JWT (sliding session). */
+const tokenRefreshHandlers = new Set<(token: string) => void>();
+export function onTokenRefresh(handler: (token: string) => void): () => void {
+  tokenRefreshHandlers.add(handler);
+  return () => tokenRefreshHandlers.delete(handler);
+}
+
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem(TOKEN_KEY);
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -40,6 +47,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     ...init,
     headers: { ...headers, ...(init.headers as Record<string, string> | undefined) },
   });
+
+  // A protected endpoint (e.g. /auth/me) may hand back a fresh JWT to extend the
+  // session. Persist it immediately so the next request carries the slid-forward
+  // token, then notify subscribers to sync reactive auth state.
+  const refreshed = res.headers.get('x-refreshed-token');
+  if (refreshed) {
+    localStorage.setItem(TOKEN_KEY, refreshed);
+    tokenRefreshHandlers.forEach((h) => h(refreshed));
+  }
 
   if (res.status === 401) {
     unauthorizedHandlers.forEach((h) => h());
