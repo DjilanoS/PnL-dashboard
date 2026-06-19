@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue';
 import type { AuthUser, MeResponse } from '@pnl/types';
-import { TOKEN_KEY, api, onUnauthorized } from '@/lib/api';
+import { TOKEN_KEY, api, onUnauthorized, onTokenRefresh } from '@/lib/api';
 import { useWallets } from '@/stores/useWallets';
 
 const USER_KEY = 'pnl.user';
@@ -57,6 +57,12 @@ function logout(): void {
 
 // Any 401 from the API clears the session.
 onUnauthorized(logout);
+
+// A refreshed JWT (e.g. from /auth/me) slides the session forward; keep the
+// reactive token in sync — the api layer already persisted it to storage.
+onTokenRefresh((next) => {
+  token.value = next;
+});
 
 export function useAuth() {
   return { token, user, isAuthenticated, setToken, setSession, hydrate, logout };

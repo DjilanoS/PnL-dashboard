@@ -108,4 +108,10 @@ test('GET /auth/me returns identity + grouped wallets', async () => {
   const me = res.json() as { user: { discordId: string }; wallets: { sol: unknown[]; sui: unknown[] } };
   assert.equal(me.user.discordId, 'd1');
   assert.ok(Array.isArray(me.wallets.sol) && Array.isArray(me.wallets.sui));
+
+  // Sliding session: /auth/me mints a fresh JWT (same subject) so an actively-used
+  // app never hits the 7-day expiry.
+  const refreshed = res.headers['x-refreshed-token'];
+  assert.equal(typeof refreshed, 'string');
+  assert.equal((app.jwt.verify(refreshed as string) as { sub: string }).sub, userId);
 });

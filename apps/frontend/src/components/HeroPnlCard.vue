@@ -17,7 +17,11 @@ const RANGES: { value: PnlRange; label: string }[] = [
 const total = computed(() => pnl.value?.total ?? 0);
 const positive = computed(() => total.value >= 0);
 // Beams parse a hex literal (no CSS vars), so mirror --profit / --loss here.
-const beamColor = computed(() => (positive.value ? '#34d399' : '#f6465d'));
+// Stay neutral until data loads — the card shouldn't read as profit or loss while empty.
+const beamColor = computed(() => {
+  if (!props.pnl) return '#64748b';
+  return total.value >= 0 ? '#34d399' : '#f6465d';
+});
 
 // Up → green, down → red, flat (0) → white.
 function toneOf(n: number): string {

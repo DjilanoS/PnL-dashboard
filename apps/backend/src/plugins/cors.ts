@@ -13,5 +13,7 @@ export default fp(async (app) => {
     origin: [...origins],
     credentials: true,
     methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+    // Expose the sliding-session token so the SPA's fetch layer can read it.
+    exposedHeaders: ['x-refreshed-token'],
   });
 });
