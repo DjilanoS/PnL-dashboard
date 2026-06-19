@@ -13,10 +13,13 @@ const KNOWN_LOGOS: Record<string, string> = {
   SUI: 'https://strapi-space-bucket-fra1-1.fra1.cdn.digitaloceanspaces.com/sui_c07df05f00.png',
 };
 
-// Fixed accent colors for tokens whose color shouldn't be derived from the logo
-// (e.g. USDC cash → light blue, not the Solana-chain purple it'd otherwise get).
+// Fixed accent colors for tokens whose color shouldn't be derived from the logo.
+// USDC cash is white; SOL/SUI are pinned to their brand colors so they don't get
+// a similar blue from logo extraction (otherwise all three read as blue).
 const KNOWN_COLORS: Record<string, string> = {
-  USDC: '#4FA9F5',
+  USDC: '#FFFFFF', // white
+  SUI: '#4da2ff', // light blue (mirrors --sui)
+  SOL: '#9945ff', // purple (mirrors --solana)
 };
 
 /** Logo URL for a known token symbol, or undefined if we don't have one. */

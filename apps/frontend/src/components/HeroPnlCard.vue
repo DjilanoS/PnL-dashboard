@@ -1,13 +1,21 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { PnlSummary } from '@pnl/types';
+import type { PnlRange } from '@pnl/types';
 import Beams from '@/components/Beams.vue';
 import { cn } from '@/lib/utils';
 import { fmtPct, fmtSignedUsd } from '@/lib/format';
+import { usePortfolio } from '@/stores/usePortfolio';
 
-const props = defineProps<{ pnl: PnlSummary | null }>();
+const { pnlWindow: pnl, pnlRange, setPnlRange } = usePortfolio();
 
-const total = computed(() => props.pnl?.total ?? 0);
+const RANGES: { value: PnlRange; label: string }[] = [
+  { value: '24h', label: '24H' },
+  { value: '30d', label: '30D' },
+  { value: 'lifetime', label: 'Lifetime' },
+];
+
+const total = computed(() => pnl.value?.total ?? 0);
+const positive = computed(() => total.value >= 0);
 // Beams parse a hex literal (no CSS vars), so mirror --profit / --loss here.
 // Stay neutral until data loads — the card shouldn't read as profit or loss while empty.
 const beamColor = computed(() => {
@@ -46,7 +54,25 @@ const pillClass =
     />
 
     <div class="relative">
-      <span class="text-sm font-medium text-muted-foreground">Current PnL</span>
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-sm font-medium text-muted-foreground">PnL</span>
+        <div
+          class="z-10 flex items-center gap-0.5 rounded-full border border-border/70 bg-white/[0.06] p-0.5 backdrop-blur-sm"
+        >
+          <button
+            v-for="r in RANGES"
+            :key="r.value"
+            type="button"
+            :class="cn(
+              'rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
+              pnlRange === r.value ? 'bg-white/15 text-foreground' : 'text-muted-foreground hover:text-foreground',
+            )"
+            @click="setPnlRange(r.value)"
+          >
+            {{ r.label }}
+          </button>
+        </div>
+      </div>
       <div :class="cn('mt-1 text-3xl font-bold tracking-tight tabular-nums sm:text-4xl', headlineTone)">
         {{ pnl ? fmtPct(pnl.roi) : '—' }}
       </div>
