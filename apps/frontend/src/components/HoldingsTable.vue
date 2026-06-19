@@ -48,7 +48,10 @@ function tone(n: number): string {
       <TableBody>
         <TableRow v-for="r in rows" :key="`${r.chain}:${r.address}`">
           <TableCell>
-            <Badge variant="outline" :class="cn('gap-1 border-0', r.chain === 'sol' ? 'text-solana' : 'text-sui')">
+            <Badge
+              variant="outline"
+              :class="cn('gap-1 border-0', r.asset === 'USDC' ? 'text-white' : r.chain === 'sol' ? 'text-solana' : 'text-sui')"
+            >
               <TokenIcon :chain="r.chain" :asset="r.asset" :image="r.image" />
               {{ r.asset }}
             </Badge>

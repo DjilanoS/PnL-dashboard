@@ -27,7 +27,7 @@ onUnmounted(() => clearInterval(refreshTimer));
   <div class="space-y-4">
     <!-- Row A: PnL (beams) + allocation, equal height -->
     <div class="grid gap-4 lg:grid-cols-3">
-      <HeroPnlCard :pnl="pnl" class="lg:col-span-2" />
+      <HeroPnlCard class="lg:col-span-2" />
 
       <Card class="lg:col-span-1">
         <CardHeader class="pb-2">

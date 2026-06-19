@@ -1,7 +1,14 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { Type } from '@sinclair/typebox';
 import mongoose from 'mongoose';
-import { tokenKey, type Holding, type NavRange, type TokenRef } from '@pnl/types';
+import {
+  tokenKey,
+  type Holding,
+  type NavRange,
+  type PnlRange,
+  type PnlSummary,
+  type TokenRef,
+} from '@pnl/types';
 import { Order, toOrderDTO } from '../../models/Order';
 import { Wallet } from '../../models/Wallet';
 import { getUserRpc } from '../../models/User';
@@ -15,7 +22,7 @@ import {
   USDC_LOGO,
   type CashAdjustmentLite,
 } from '../../services/cash';
-import { getCurrentPricesCached } from '../../services/prices';
+import { getCurrentPricesCached, getHistoricalPriceCached } from '../../services/prices';
 import { CashAdjustment } from '../../models/CashAdjustment';
 import { getAllWalletTokenBalances } from '../../services/balances';
 import { HoldingsResponseSchema, PnlSummarySchema, TimeseriesResponseSchema } from '../../schemas';
@@ -38,6 +45,71 @@ const RangeSchema = Type.Union([
   Type.Literal('1y'),
   Type.Literal('all'),
 ]);
+
+const PnlRangeSchema = Type.Union([
+  Type.Literal('24h'),
+  Type.Literal('30d'),
+  Type.Literal('lifetime'),
+]);
+
+const DAY = 86_400_000;
+const PNL_SPAN_DAYS: Record<Exclude<PnlRange, 'lifetime'>, number> = { '24h': 1, '30d': 30 };
+
+/**
+ * PnL scoped to a time window: "total PnL as of now" minus "total PnL as of the
+ * window start", so realized = sells booked in the window and unrealized = the
+ * change in unrealized over it (total = realized + unrealized still holds).
+ * Deposits/withdrawals carry no PnL, so they fall out automatically. `lifetime`
+ * is the all-time figure (start before the first order). Historical prices are
+ * daily, so the window start is the most recent prior daily close.
+ */
+async function computePnlForRange(
+  entries: LedgerEntry[],
+  adjustments: CashAdjustmentLite[],
+  range: PnlRange,
+  nowMs: number = Date.now(),
+): Promise<PnlSummary> {
+  const tokens = tokensOf(entries);
+  const current = await getCurrentPricesCached(tokens);
+  const now = computePnl(entries, current);
+  if (range === 'lifetime') return now;
+
+  const todayMid = Math.floor(nowMs / DAY) * DAY;
+  const startMid = todayMid - PNL_SPAN_DAYS[range] * DAY;
+  const cutoffMs = startMid + DAY - 1;
+
+  // Each held token's price at the window-start day (fallback: live price → the
+  // token contributes ~0 to the window rather than a spurious jump).
+  const startPrices: Record<string, number> = {};
+  await Promise.all(
+    tokens.map(async (t) => {
+      const key = tokenKey(t.chain, t.address);
+      const p = await getHistoricalPriceCached(t.chain, t.address, startMid / 1000);
+      startPrices[key] = p ?? current[key] ?? 0;
+    }),
+  );
+
+  const before = entries.filter((e) => new Date(e.timestamp).getTime() <= cutoffMs);
+  const start = computePnl(before, startPrices);
+
+  // Portfolio value at the window start = held crypto (at start prices) + USDC cash.
+  const navStart =
+    start.perAsset.reduce((s, a) => s + a.marketValue, 0) +
+    usdcBalanceAt(buildCashTimeline(entries), cutoffMs) +
+    adjustmentsSumAt(adjustments, cutoffMs);
+
+  const realized = now.realized - start.realized;
+  const unrealized = now.unrealized - start.unrealized;
+  const total = realized + unrealized;
+  return {
+    realized,
+    unrealized,
+    total,
+    invested: navStart,
+    roi: navStart > 1e-9 ? total / navStart : 0,
+    perAsset: now.perAsset,
+  };
+}
 
 const portfolioRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.addHook('onRequest', app.authenticate);
@@ -69,11 +141,23 @@ const portfolioRoutes: FastifyPluginAsyncTypebox = async (app) => {
     return docs.map((d) => ({ ms: d.timestamp.getTime(), amount: Number.parseFloat(String(d.amount)) }));
   }
 
-  app.get('/pnl/summary', { schema: { response: { 200: PnlSummarySchema } } }, async (req) => {
-    const entries = await loadEntries(req.user.sub);
-    const prices = await getCurrentPricesCached(tokensOf(entries));
-    return computePnl(entries, prices);
-  });
+  app.get(
+    '/pnl/summary',
+    {
+      schema: {
+        querystring: Type.Object({ range: Type.Optional(PnlRangeSchema) }),
+        response: { 200: PnlSummarySchema },
+      },
+    },
+    async (req) => {
+      const range: PnlRange = req.query.range ?? 'lifetime';
+      const [entries, adjustments] = await Promise.all([
+        loadEntries(req.user.sub),
+        loadAdjustments(req.user.sub),
+      ]);
+      return computePnlForRange(entries, adjustments, range);
+    },
+  );
 
   app.get('/holdings', { schema: { response: { 200: HoldingsResponseSchema } } }, async (req) => {
     const userId = new mongoose.Types.ObjectId(req.user.sub);

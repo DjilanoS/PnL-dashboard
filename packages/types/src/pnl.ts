@@ -49,3 +49,6 @@ export interface PnlSummary {
   /** these aggregate per-asset values for the cards. */
   perAsset: AssetPnl[];
 }
+
+/** Time window the hero PnL card can be scoped to. */
+export type PnlRange = '24h' | '30d' | 'lifetime';
