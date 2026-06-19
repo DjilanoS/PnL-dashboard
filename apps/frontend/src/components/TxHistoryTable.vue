@@ -115,8 +115,8 @@ const table = useVueTable({
             </span>
           </TableCell>
           <TableCell class="tabular-nums">{{ fmtNum(row.original.amount) }}</TableCell>
-          <TableCell class="tabular-nums">{{ fmtUsd(row.original.priceUsd, 2) }}</TableCell>
-          <TableCell class="tabular-nums">{{ fmtUsd(row.original.amount * row.original.priceUsd) }}</TableCell>
+          <TableCell class="tabular-nums">{{ fmtUsd(row.original.priceUsd, 4) }}</TableCell>
+          <TableCell class="tabular-nums">{{ fmtUsd(row.original.amount * row.original.priceUsd, 4) }}</TableCell>
           <TableCell>
             <a
               v-if="explorerUrl(row.original)"

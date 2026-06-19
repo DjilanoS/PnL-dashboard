@@ -54,11 +54,11 @@ function tone(n: number): string {
             </Badge>
           </TableCell>
           <TableCell class="text-right tabular-nums">{{ fmtNum(r.ledgerQty) }}</TableCell>
-          <TableCell class="text-right tabular-nums">{{ fmtUsd(r.avgCost, 2) }}</TableCell>
-          <TableCell class="text-right tabular-nums">{{ fmtUsd(r.avgBuy, 2) }}</TableCell>
-          <TableCell class="text-right tabular-nums">{{ r.avgSell > 0 ? fmtUsd(r.avgSell, 2) : '—' }}</TableCell>
-          <TableCell class="text-right tabular-nums">{{ fmtUsd(r.currentPrice, 2) }}</TableCell>
-          <TableCell class="text-right tabular-nums">{{ fmtUsd(r.valueUsd) }}</TableCell>
+          <TableCell class="text-right tabular-nums">{{ fmtUsd(r.avgCost, 4) }}</TableCell>
+          <TableCell class="text-right tabular-nums">{{ fmtUsd(r.avgBuy, 4) }}</TableCell>
+          <TableCell class="text-right tabular-nums">{{ r.avgSell > 0 ? fmtUsd(r.avgSell, 4) : '—' }}</TableCell>
+          <TableCell class="text-right tabular-nums">{{ fmtUsd(r.currentPrice, 4) }}</TableCell>
+          <TableCell class="text-right tabular-nums">{{ fmtUsd(r.valueUsd, 4) }}</TableCell>
           <TableCell :class="cn('text-right tabular-nums', tone(r.realized))">
             {{ r.realized !== 0 ? fmtSignedUsd(r.realized) : '—' }}
           </TableCell>
