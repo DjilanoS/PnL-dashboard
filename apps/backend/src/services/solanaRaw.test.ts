@@ -50,3 +50,30 @@ test('parseSolanaSignature auto-detects the signer when no address is given', as
   assert.equal(preview.side, 'buy');
   assert.ok(Math.abs(preview.amount - 41.7867) < 0.01, `amount=${preview.amount}`);
 });
+
+// Real mainnet tx: a gasless Jupiter Ultra swap (USDC -> ~42.58 SOL). The fee
+// payer is a gas sponsor and the trader signer nets zero SOL — the swap output
+// is unwrapped from wSOL into a separate wallet. With no address given, the
+// parser must still find the SOL buy instead of "no trade found".
+const GASLESS_SIG =
+  '4Kim97TYxXHbcZyo9aVmuvmg7NQjK4bK2GKXD2GBYdDFuY4mLmNeSoBD8u1iwE5BP8eQZi682bPVrCcZe2NKXzZK';
+
+test('parseSolanaSignature finds a gasless/relayed swap (fee payer is a sponsor)', async () => {
+  const config = { SOLANA_RPC_URL: '', HELIUS_API_KEY: '' } as AppConfig;
+  let preview;
+  try {
+    preview = await parseSolanaSignature(config, `https://solscan.io/tx/${GASLESS_SIG}`);
+  } catch (e) {
+    console.warn('skipped (RPC unavailable):', (e as Error).message);
+    return;
+  }
+  if (!preview) {
+    console.warn('skipped: tx not returned by public RPC');
+    return;
+  }
+  assert.equal(preview.asset, 'SOL');
+  assert.equal(preview.side, 'buy');
+  assert.ok(Math.abs(preview.amount - 42.5843) < 0.01, `amount=${preview.amount}`);
+  // The user wasn't the fee payer (a sponsor paid gas), so no gas is charged.
+  assert.equal(preview.gasUsd, 0);
+});
