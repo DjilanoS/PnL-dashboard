@@ -61,7 +61,7 @@ const pctLabel = computed(() => `${pct.value > 0 ? '+' : ''}${(pct.value * 100).
 
     <div class="flex items-baseline gap-2">
       <span class="text-lg font-semibold tabular-nums" :class="closed ? toneOf(holding.realized) : ''">
-        {{ closed ? fmtSignedUsd(holding.realized) : fmtUsd(holding.valueUsd, 0) }}
+        {{ closed ? fmtSignedUsd(holding.realized) : fmtUsd(holding.valueUsd) }}
       </span>
       <span v-if="!closed" class="truncate text-sm tabular-nums text-muted-foreground">
         {{ fmtAssetQty(holding.ledgerQty, isUsdc) }} {{ holding.asset }}

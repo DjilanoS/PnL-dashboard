@@ -23,7 +23,7 @@ import TokenIcon from '@/components/icons/TokenIcon.vue';
 import { chainColor } from '@/composables/useTokenColor';
 import { knownTokenColor } from '@/lib/tokenLogos';
 import { cn } from '@/lib/utils';
-import { fmtDate, fmtNum, fmtUsd, shortSig } from '@/lib/format';
+import { fmtAssetQty, fmtAssetUsd, fmtDate, fmtUsd, shortSig } from '@/lib/format';
 
 const props = defineProps<{ orders: Order[] }>();
 const emit = defineEmits<{ delete: [id: string]; edit: [order: Order] }>();
@@ -114,9 +114,9 @@ const table = useVueTable({
               {{ row.original.side }}
             </span>
           </TableCell>
-          <TableCell class="tabular-nums">{{ fmtNum(row.original.amount) }}</TableCell>
-          <TableCell class="tabular-nums">{{ fmtUsd(row.original.priceUsd, 4) }}</TableCell>
-          <TableCell class="tabular-nums">{{ fmtUsd(row.original.amount * row.original.priceUsd, 4) }}</TableCell>
+          <TableCell class="tabular-nums">{{ fmtAssetQty(row.original.amount, row.original.asset === 'USDC') }}</TableCell>
+          <TableCell class="tabular-nums">{{ fmtAssetUsd(row.original.priceUsd, row.original.asset === 'USDC') }}</TableCell>
+          <TableCell class="tabular-nums">{{ fmtUsd(row.original.amount * row.original.priceUsd) }}</TableCell>
           <TableCell>
             <a
               v-if="explorerUrl(row.original)"

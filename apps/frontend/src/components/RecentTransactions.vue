@@ -4,7 +4,7 @@ import { ArrowDownLeft, ArrowUpRight } from '@lucide/vue';
 import { useOrders } from '@/stores/useOrders';
 import TokenIcon from '@/components/icons/TokenIcon.vue';
 import { cn } from '@/lib/utils';
-import { fmtDate, fmtNum, fmtUsd } from '@/lib/format';
+import { fmtAssetQty, fmtAssetUsd, fmtDate } from '@/lib/format';
 
 const { orders, fetchOrders } = useOrders();
 
@@ -41,8 +41,8 @@ const recent = computed(() => orders.value.slice(0, 5));
         <div class="truncate text-xs text-muted-foreground">{{ fmtDate(o.timestamp) }}</div>
       </div>
       <div class="ml-auto text-right">
-        <div class="text-sm tabular-nums">{{ fmtNum(o.amount) }}</div>
-        <div class="text-xs tabular-nums text-muted-foreground">@ {{ fmtUsd(o.priceUsd, 4) }}</div>
+        <div class="text-sm tabular-nums">{{ fmtAssetQty(o.amount, o.asset === 'USDC') }}</div>
+        <div class="text-xs tabular-nums text-muted-foreground">@ {{ fmtAssetUsd(o.priceUsd, o.asset === 'USDC') }}</div>
       </div>
     </div>
     <p v-if="recent.length === 0" class="py-6 text-center text-sm text-muted-foreground">
