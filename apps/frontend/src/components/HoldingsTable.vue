@@ -12,14 +12,14 @@ import {
 import { Badge } from '@/components/ui/badge';
 import TokenIcon from '@/components/icons/TokenIcon.vue';
 import { cn } from '@/lib/utils';
-import { fmtNum, fmtSignedUsd, fmtUsd } from '@/lib/format';
+import { fmtAssetQty, fmtAssetUsd, fmtSignedUsd, fmtUsd } from '@/lib/format';
 
 const props = defineProps<{ holdings: Holding[]; pnl: PnlSummary | null }>();
 
 const rows = computed(() =>
   props.holdings.map((h) => {
     const p = props.pnl?.perAsset.find((a) => a.chain === h.chain && a.address === h.address);
-    return { ...h, avgBuy: p?.avgBuy ?? 0, avgSell: p?.avgSell ?? 0 };
+    return { ...h, avgBuy: p?.avgBuy ?? 0, avgSell: p?.avgSell ?? 0, isUsdc: h.asset === 'USDC' };
   }),
 );
 
@@ -56,12 +56,12 @@ function tone(n: number): string {
               {{ r.asset }}
             </Badge>
           </TableCell>
-          <TableCell class="text-right tabular-nums">{{ fmtNum(r.ledgerQty) }}</TableCell>
-          <TableCell class="text-right tabular-nums">{{ fmtUsd(r.avgCost, 4) }}</TableCell>
-          <TableCell class="text-right tabular-nums">{{ fmtUsd(r.avgBuy, 4) }}</TableCell>
-          <TableCell class="text-right tabular-nums">{{ r.avgSell > 0 ? fmtUsd(r.avgSell, 4) : '—' }}</TableCell>
-          <TableCell class="text-right tabular-nums">{{ fmtUsd(r.currentPrice, 4) }}</TableCell>
-          <TableCell class="text-right tabular-nums">{{ fmtUsd(r.valueUsd, 4) }}</TableCell>
+          <TableCell class="text-right tabular-nums">{{ fmtAssetQty(r.ledgerQty, r.isUsdc) }}</TableCell>
+          <TableCell class="text-right tabular-nums">{{ fmtAssetUsd(r.avgCost, r.isUsdc) }}</TableCell>
+          <TableCell class="text-right tabular-nums">{{ fmtAssetUsd(r.avgBuy, r.isUsdc) }}</TableCell>
+          <TableCell class="text-right tabular-nums">{{ r.avgSell > 0 ? fmtAssetUsd(r.avgSell, r.isUsdc) : '—' }}</TableCell>
+          <TableCell class="text-right tabular-nums">{{ fmtAssetUsd(r.currentPrice, r.isUsdc) }}</TableCell>
+          <TableCell class="text-right tabular-nums">{{ fmtUsd(r.valueUsd, 0) }}</TableCell>
           <TableCell :class="cn('text-right tabular-nums', tone(r.realized))">
             {{ r.realized !== 0 ? fmtSignedUsd(r.realized) : '—' }}
           </TableCell>

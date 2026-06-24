@@ -22,6 +22,43 @@ export function fmtNum(n: number, maxFractionDigits = 4): string {
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: maxFractionDigits }).format(n);
 }
 
+/**
+ * Magnitude-aware decimals for a token amount/price:
+ *  - |n| >= 1     → 2 decimals
+ *  - 0.01 ≤ |n| < 1 → 3 decimals
+ *  - |n| < 0.01   → significant digits, so sub-cent prices keep their real value
+ */
+function tokenFractionOpts(n: number): Intl.NumberFormatOptions {
+  const abs = Math.abs(n);
+  if (abs >= 1) return { maximumFractionDigits: 2 };
+  if (abs >= 0.01) return { maximumFractionDigits: 3 };
+  return { maximumSignificantDigits: 4 };
+}
+
+/** USD price for a non-USDC token (magnitude-aware decimals). */
+export function fmtTokenUsd(n: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    ...tokenFractionOpts(n),
+  }).format(n);
+}
+
+/** Bare token quantity (magnitude-aware decimals). */
+export function fmtTokenQty(n: number): string {
+  return new Intl.NumberFormat('en-US', tokenFractionOpts(n)).format(n);
+}
+
+/** USD price/cost for an asset: USDC shows whole dollars, tokens use magnitude-aware decimals. */
+export function fmtAssetUsd(n: number, isUsdc: boolean): string {
+  return isUsdc ? fmtUsd(n, 0) : fmtTokenUsd(n);
+}
+
+/** Quantity for an asset: USDC shows whole units, tokens use magnitude-aware decimals. */
+export function fmtAssetQty(n: number, isUsdc: boolean): string {
+  return isUsdc ? fmtNum(n, 0) : fmtTokenQty(n);
+}
+
 export function fmtPct(ratio: number): string {
   const sign = ratio > 0 ? '+' : '';
   return `${sign}${(ratio * 100).toFixed(2)}%`;
