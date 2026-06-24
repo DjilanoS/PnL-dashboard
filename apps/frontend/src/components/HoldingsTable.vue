@@ -61,7 +61,7 @@ function tone(n: number): string {
           <TableCell class="text-right tabular-nums">{{ fmtAssetUsd(r.avgBuy, r.isUsdc) }}</TableCell>
           <TableCell class="text-right tabular-nums">{{ r.avgSell > 0 ? fmtAssetUsd(r.avgSell, r.isUsdc) : '—' }}</TableCell>
           <TableCell class="text-right tabular-nums">{{ fmtAssetUsd(r.currentPrice, r.isUsdc) }}</TableCell>
-          <TableCell class="text-right tabular-nums">{{ fmtUsd(r.valueUsd, 0) }}</TableCell>
+          <TableCell class="text-right tabular-nums">{{ fmtUsd(r.valueUsd) }}</TableCell>
           <TableCell :class="cn('text-right tabular-nums', tone(r.realized))">
             {{ r.realized !== 0 ? fmtSignedUsd(r.realized) : '—' }}
           </TableCell>
