@@ -7,7 +7,7 @@ import Sparkline from '@/components/Sparkline.vue';
 import AdjustCashDialog from '@/components/AdjustCashDialog.vue';
 import { useTokenColor } from '@/composables/useTokenColor';
 import { knownTokenLogo } from '@/lib/tokenLogos';
-import { fmtNum, fmtSignedUsd, fmtUsd } from '@/lib/format';
+import { fmtAssetQty, fmtSignedUsd, fmtUsd } from '@/lib/format';
 
 const props = defineProps<{ holding: Holding; series: number[] }>();
 
@@ -61,10 +61,10 @@ const pctLabel = computed(() => `${pct.value > 0 ? '+' : ''}${(pct.value * 100).
 
     <div class="flex items-baseline gap-2">
       <span class="text-lg font-semibold tabular-nums" :class="closed ? toneOf(holding.realized) : ''">
-        {{ closed ? fmtSignedUsd(holding.realized) : fmtUsd(holding.valueUsd) }}
+        {{ closed ? fmtSignedUsd(holding.realized) : fmtUsd(holding.valueUsd, 0) }}
       </span>
       <span v-if="!closed" class="truncate text-sm tabular-nums text-muted-foreground">
-        {{ fmtNum(holding.ledgerQty) }} {{ holding.asset }}
+        {{ fmtAssetQty(holding.ledgerQty, isUsdc) }} {{ holding.asset }}
       </span>
     </div>
 
