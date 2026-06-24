@@ -120,6 +120,10 @@ async function heliusError(res: Response): Promise<never> {
 
 // --- Raw getTransaction parsing (robust; treats wSOL as SOL by construction) ---
 
+interface RawAccountKey {
+  pubkey: string;
+  signer?: boolean;
+}
 interface RawTx {
   blockTime?: number | null;
   meta?: {
@@ -130,12 +134,32 @@ interface RawTx {
     postTokenBalances?: RawTokenBalance[];
     loadedAddresses?: { writable?: string[]; readonly?: string[] };
   } | null;
-  transaction: { message: { accountKeys: ({ pubkey: string } | string)[] } };
+  transaction: { message: { accountKeys: (RawAccountKey | string)[] } };
 }
 interface RawTokenBalance {
+  accountIndex?: number;
   owner?: string;
   mint: string;
   uiTokenAmount: { amount: string; decimals: number };
+}
+
+/** Every account key in index order: static keys + address-table lookups. */
+function fullAccountKeys(raw: RawTx): string[] {
+  const staticKeys = raw.transaction.message.accountKeys.map((k) =>
+    typeof k === 'string' ? k : k.pubkey,
+  );
+  return [
+    ...staticKeys,
+    ...(raw.meta?.loadedAddresses?.writable ?? []),
+    ...(raw.meta?.loadedAddresses?.readonly ?? []),
+  ];
+}
+
+/** The accounts that signed the tx (jsonParsed flags them with `signer`). */
+function signerKeys(raw: RawTx): string[] {
+  return raw.transaction.message.accountKeys
+    .filter((k): k is RawAccountKey => typeof k !== 'string' && !!k.signer)
+    .map((k) => k.pubkey);
 }
 
 function wsolSum(balances: RawTokenBalance[] | undefined, user: string): number {
@@ -157,21 +181,66 @@ export function solDeltaFromRawTx(raw: RawTx, user: string): number {
   const meta = raw.meta;
   if (!meta) return 0;
 
-  const staticKeys = raw.transaction.message.accountKeys.map((k) =>
-    typeof k === 'string' ? k : k.pubkey,
-  );
-  const fullKeys = [
-    ...staticKeys,
-    ...(meta.loadedAddresses?.writable ?? []),
-    ...(meta.loadedAddresses?.readonly ?? []),
-  ];
+  const fullKeys = fullAccountKeys(raw);
 
   const idx = fullKeys.indexOf(user);
   let lamports = idx >= 0 ? (meta.postBalances[idx] ?? 0) - (meta.preBalances[idx] ?? 0) : 0;
-  if (staticKeys[0] === user) lamports += meta.fee; // exclude gas from trade size
+  if (fullKeys[0] === user) lamports += meta.fee; // exclude gas from trade size
 
   const wsolDelta = wsolSum(meta.postTokenBalances, user) - wsolSum(meta.preTokenBalances, user);
   return lamports / 1e9 + wsolDelta;
+}
+
+/**
+ * Pick the wallet a link-imported trade should be attributed to when the caller
+ * didn't name one. The fee payer (accountKeys[0]) is NOT reliable: on gasless /
+ * relayed swaps (e.g. Jupiter Ultra) it's a gas sponsor that never trades, and
+ * the swap's SOL output can be unwrapped from a wSOL account into a wallet that
+ * isn't even a signer.
+ *
+ * Strategy: weigh every signer, then every plain (non-token) account whose
+ * native SOL moved, and take the largest |SOL delta| (native + owned wSOL).
+ * Token accounts are skipped so an AMM's wSOL vault is never mistaken for the
+ * trader. Signers are considered first so that when the trader and a peer move
+ * equal-and-opposite SOL, the trader wins and the buy/sell side stays correct.
+ */
+export function pickTradeWallet(raw: RawTx): string | null {
+  const meta = raw.meta;
+  if (!meta) return null;
+
+  const fullKeys = fullAccountKeys(raw);
+
+  // Pubkeys that are SPL token accounts (ATAs, AMM vaults) — not real wallets.
+  const tokenAccounts = new Set<string>();
+  for (const b of [...(meta.preTokenBalances ?? []), ...(meta.postTokenBalances ?? [])]) {
+    if (b.accountIndex == null) continue;
+    const k = fullKeys[b.accountIndex];
+    if (k) tokenAccounts.add(k);
+  }
+
+  const signers = new Set(signerKeys(raw));
+
+  let best: string | null = null;
+  let bestAbs = 0;
+  const consider = (k: string) => {
+    const abs = Math.abs(solDeltaFromRawTx(raw, k));
+    if (abs > bestAbs) {
+      bestAbs = abs;
+      best = k;
+    }
+  };
+
+  // Signers first (so equal-magnitude ties resolve to the trader, not a peer).
+  for (const s of signers) consider(s);
+  // Then any plain wallet whose native SOL moved — catches the swap-output
+  // wallet on gasless routes where it isn't a signer.
+  for (let i = 0; i < fullKeys.length; i++) {
+    const k = fullKeys[i];
+    if (!k || signers.has(k) || tokenAccounts.has(k)) continue;
+    if ((meta.postBalances[i] ?? 0) - (meta.preBalances[i] ?? 0) !== 0) consider(k);
+  }
+
+  return bestAbs > 1e-9 ? best : null;
 }
 
 async function fetchRawTx(config: AppConfig, sig: string): Promise<RawTx | null> {
@@ -212,7 +281,9 @@ export async function parseSolanaSignature(
 
   const firstKey = raw.transaction.message.accountKeys[0];
   const feePayer = typeof firstKey === 'string' ? firstKey : firstKey?.pubkey;
-  const ref = address || feePayer;
+  // With no explicit wallet, attribute to the wallet whose SOL actually moved —
+  // not the fee payer, which on gasless/relayed swaps is just a gas sponsor.
+  const ref = address || pickTradeWallet(raw) || feePayer;
   if (!ref) return null;
 
   const delta = solDeltaFromRawTx(raw, ref);
