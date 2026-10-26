@@ -26,6 +26,7 @@ export const envSchema = Type.Object({
   HELIUS_API_KEY: Type.String({ default: '' }),
   SOLANA_RPC_URL: Type.String({ default: '' }),
   SUI_RPC_URL: Type.String({ default: '' }),
+  SUI_GRAPHQL_URL: Type.String({ default: '' }),
 
   CRON_SECRET: Type.String({ default: 'dev-cron-secret' }),
 });
@@ -42,6 +43,8 @@ export const HELIUS_API_BASE = 'https://api-mainnet.helius-rpc.com/v0';
 export const DEFAULT_SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
 // Public Sui mainnet fullnode — served over gRPC (JSON-RPC has been disabled there).
 export const DEFAULT_SUI_RPC = 'https://fullnode.mainnet.sui.io:443';
+// Public Sui GraphQL indexer — full transaction history (fullnodes only keep ~2 weeks).
+export const DEFAULT_SUI_GRAPHQL = 'https://graphql.mainnet.sui.io/graphql';
 
 /**
  * Build an effective config that applies a user's custom RPC overrides. When a

@@ -1,5 +1,6 @@
 import { SuiGrpcClient } from '@mysten/sui/grpc';
-import type { SuiClientTypes } from '@mysten/sui/client';
+import { SuiGraphQLClient } from '@mysten/sui/graphql';
+import { TransactionError, type SuiClientTypes } from '@mysten/sui/client';
 import { normalizeSuiAddress } from '@mysten/sui/utils';
 import {
   NATIVE_SUI_TYPE,
@@ -8,7 +9,7 @@ import {
   type ParsedOrderPreview,
   type TokenMeta,
 } from '@pnl/types';
-import { DEFAULT_SUI_RPC, type AppConfig } from '../config/env';
+import { DEFAULT_SUI_GRAPHQL, DEFAULT_SUI_RPC, type AppConfig } from '../config/env';
 import { getHistoricalPriceForToken } from './prices';
 
 /** A Sui tx as returned by the gRPC client with the includes the parser needs. */
@@ -28,7 +29,22 @@ export function getSuiClient(config: AppConfig): SuiGrpcClient {
   }
   return client;
 }
-const suiClient = getSuiClient;
+
+// Transaction history goes through GraphQL: fullnodes (gRPC) prune transactions
+// older than ~2 weeks, while the GraphQL indexer serves the full chain history.
+const historyClientsByUrl = new Map<string, SuiGraphQLClient>();
+function getSuiHistoryClient(config: AppConfig): SuiGraphQLClient {
+  const url = config.SUI_GRAPHQL_URL || DEFAULT_SUI_GRAPHQL;
+  let client = historyClientsByUrl.get(url);
+  if (!client) {
+    client = new SuiGraphQLClient({ url, network: 'mainnet' });
+    historyClientsByUrl.set(url, client);
+  }
+  return client;
+}
+
+/** GraphQL rejects pages larger than this. */
+const HISTORY_PAGE_SIZE = 50;
 
 /** Unwrap a gRPC TransactionResult (executed or failed) into the tx itself. */
 function unwrapTx<T>(res: { Transaction?: T; FailedTransaction?: T }): T {
@@ -108,12 +124,19 @@ export async function parseSuiDigest(
 ): Promise<ParsedOrderPreview | null> {
   const digest = extractSuiDigest(urlOrSig);
   if (!digest) throw new Error('Could not find a Sui digest in that input');
-  const tx = unwrapTx(
-    await suiClient(config).core.getTransaction({
-      digest,
-      include: { ...TX_INCLUDE, transaction: true },
-    }),
-  );
+  let tx: SuiClientTypes.Transaction<typeof TX_INCLUDE & { transaction: true }>;
+  try {
+    tx = unwrapTx(
+      await getSuiHistoryClient(config).core.getTransaction({
+        digest,
+        include: { ...TX_INCLUDE, transaction: true },
+      }),
+    );
+  } catch (err) {
+    // Unknown digest → no trade (422), not a server error.
+    if (err instanceof TransactionError && err.reason === 'notFound') return null;
+    throw err;
+  }
   const sender = tx.transaction?.sender;
   const ref = address || sender;
   if (!ref) return null;
@@ -126,16 +149,25 @@ export async function scanSui(
   limit = 50,
 ): Promise<ParsedOrderPreview[]> {
   if (!user) throw new Error('Link your Sui wallet first');
-  const res = await suiClient(config).core.listTransactions({
-    filter: { sender: normalizeSuiAddress(user) },
-    include: TX_INCLUDE,
-    limit,
-    order: 'descending',
-  });
+  const client = getSuiHistoryClient(config);
+  const txs: SuiTx[] = [];
+  let before: string | null = null;
+  do {
+    const page: SuiClientTypes.ListTransactionsResponse<typeof TX_INCLUDE> =
+      await client.core.listTransactions({
+        filter: { sender: normalizeSuiAddress(user) },
+        include: TX_INCLUDE,
+        limit: Math.min(HISTORY_PAGE_SIZE, limit - txs.length),
+        order: 'descending',
+        before,
+      });
+    txs.push(...page.transactions.map(unwrapTx));
+    before = page.hasNextPage ? page.endCursor : null;
+  } while (before && txs.length < limit);
 
   const out: ParsedOrderPreview[] = [];
-  for (const result of res.transactions) {
-    const preview = await parseSuiTx(unwrapTx(result), user);
+  for (const tx of txs) {
+    const preview = await parseSuiTx(tx, user);
     if (preview) out.push(preview);
   }
   return out;

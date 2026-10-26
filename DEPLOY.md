@@ -31,7 +31,8 @@ In Vercel: **New Project → import the repo**.
   | `MONGODB_URI` | your Atlas connection string |
   | `JWT_SECRET` | `openssl rand -hex 32` |
   | `HELIUS_API_KEY` | your Helius key |
-  | `SUI_RPC_URL` | (optional) a Sui mainnet RPC; blank = public fullnode |
+  | `SUI_RPC_URL` | (optional) a Sui mainnet gRPC RPC; blank = public fullnode |
+  | `SUI_GRAPHQL_URL` | (optional) a Sui mainnet GraphQL endpoint for tx history; blank = public indexer |
   | `FRONTEND_ORIGIN` | the frontend URL (fill after step 3, then redeploy) |
   | `CRON_SECRET` | `openssl rand -hex 32` (Vercel sends it to the cron) |
 - After first deploy, under **Settings → Functions**, enable **Fluid compute**
