@@ -7,15 +7,24 @@ const orders = ref<Order[]>([]);
 const loading = ref(false);
 const loaded = ref(false);
 
+// Shared in-flight request, so concurrent callers (the dashboard and its
+// orders-backed children all fetch on mount) trigger a single GET /orders.
+let inflight: Promise<void> | null = null;
+
 async function fetchOrders(force = false): Promise<void> {
   if (loaded.value && !force) return;
-  loading.value = true;
-  try {
-    orders.value = await api.get<Order[]>('/orders');
-    loaded.value = true;
-  } finally {
-    loading.value = false;
-  }
+  if (inflight) return inflight;
+  inflight = (async () => {
+    loading.value = true;
+    try {
+      orders.value = await api.get<Order[]>('/orders');
+      loaded.value = true;
+    } finally {
+      loading.value = false;
+      inflight = null;
+    }
+  })();
+  return inflight;
 }
 
 async function addOrder(input: ManualOrderInput): Promise<Order> {

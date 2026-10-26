@@ -80,6 +80,18 @@ test('POST rejects an invalid / internal RPC URL (400)', async () => {
   assert.equal(res.statusCode, 400);
 });
 
+test('Sui RPC URLs with a query string are rejected (gRPC-web appends to the path)', async () => {
+  const url = 'https://sui-rpc.example.com/?api-key=abc';
+  let res = await app.inject({ method: 'POST', url: '/settings/rpc', headers, payload: { chain: 'sui', url } });
+  assert.equal(res.statusCode, 400);
+  res = await app.inject({ method: 'POST', url: '/rpc/health', headers, payload: { chain: 'sui', url } });
+  assert.equal(res.statusCode, 400);
+  // Solana JSON-RPC URLs commonly carry the key as a query param — still allowed.
+  res = await app.inject({ method: 'POST', url: '/settings/rpc', headers, payload: { chain: 'sol', url: 'https://sol-rpc.example.com/?api-key=abc' } });
+  assert.equal(res.statusCode, 200);
+  await app.inject({ method: 'POST', url: '/settings/rpc', headers, payload: { chain: 'sol', url: null } });
+});
+
 test('POST /rpc/health rejects an invalid URL (400)', async () => {
   const res = await app.inject({
     method: 'POST',
