@@ -1,5 +1,6 @@
 import net from 'node:net';
 import dns from 'node:dns/promises';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
 import type { Chain } from '@pnl/types';
 
 const TIMEOUT_MS = 6000;
@@ -109,13 +110,6 @@ export async function safeRpcFetch(url: string, init: RequestInit = {}): Promise
   return fetch(url, { ...init, redirect: 'manual' });
 }
 
-/** A lightweight, no-side-effect JSON-RPC probe per chain. */
-function probeBody(chain: Chain): Record<string, unknown> {
-  return chain === 'sol'
-    ? { jsonrpc: '2.0', id: 1, method: 'getHealth' }
-    : { jsonrpc: '2.0', id: 1, method: 'sui_getChainIdentifier', params: [] };
-}
-
 /** Ping an RPC URL; returns reachability + round-trip latency (null when down). */
 export async function pingRpc(
   chain: Chain,
@@ -125,10 +119,20 @@ export async function pingRpc(
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   const start = Date.now();
   try {
+    if (chain === 'sui') {
+      // Sui fullnodes serve gRPC(-web), not JSON-RPC; probe via the same guarded fetch.
+      const client = new SuiGrpcClient({
+        network: 'mainnet',
+        baseUrl: url,
+        fetch: (input, init) => safeRpcFetch(String(input), init),
+      });
+      await client.core.getChainIdentifier({ signal: controller.signal });
+      return { ok: true, latencyMs: Date.now() - start };
+    }
     const res = await safeRpcFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(probeBody(chain)),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getHealth' }),
       signal: controller.signal,
     });
     if (!res.ok) return { ok: false, latencyMs: null };

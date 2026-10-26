@@ -1,5 +1,5 @@
-import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from '@mysten/sui/jsonRpc';
-import type { SuiTransactionBlockResponse } from '@mysten/sui/jsonRpc';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
+import type { SuiClientTypes } from '@mysten/sui/client';
 import { normalizeSuiAddress } from '@mysten/sui/utils';
 import {
   NATIVE_SUI_TYPE,
@@ -8,21 +8,32 @@ import {
   type ParsedOrderPreview,
   type TokenMeta,
 } from '@pnl/types';
-import type { AppConfig } from '../config/env';
+import { DEFAULT_SUI_RPC, type AppConfig } from '../config/env';
 import { getHistoricalPriceForToken } from './prices';
 
+/** A Sui tx as returned by the gRPC client with the includes the parser needs. */
+export type SuiTx = SuiClientTypes.Transaction<{ balanceChanges: true; effects: true }>;
+
+const TX_INCLUDE = { balanceChanges: true, effects: true } as const;
+
 // Cache one client per RPC URL so per-user custom endpoints don't collide.
-const clientsByUrl = new Map<string, SuiJsonRpcClient>();
-export function getSuiClient(config: AppConfig): SuiJsonRpcClient {
-  const url = config.SUI_RPC_URL || getJsonRpcFullnodeUrl('mainnet');
+// Public fullnodes no longer serve JSON-RPC, so this talks gRPC(-web).
+const clientsByUrl = new Map<string, SuiGrpcClient>();
+export function getSuiClient(config: AppConfig): SuiGrpcClient {
+  const url = config.SUI_RPC_URL || DEFAULT_SUI_RPC;
   let client = clientsByUrl.get(url);
   if (!client) {
-    client = new SuiJsonRpcClient({ url, network: 'mainnet' });
+    client = new SuiGrpcClient({ baseUrl: url, network: 'mainnet' });
     clientsByUrl.set(url, client);
   }
   return client;
 }
 const suiClient = getSuiClient;
+
+/** Unwrap a gRPC TransactionResult (executed or failed) into the tx itself. */
+function unwrapTx<T>(res: { Transaction?: T; FailedTransaction?: T }): T {
+  return (res.Transaction ?? res.FailedTransaction) as T;
+}
 
 /** True for the native SUI coin type (0x2::sui::SUI, any zero-padding). */
 function isSuiCoin(coinType: string): boolean {
@@ -42,19 +53,11 @@ function explorerUrl(digest: string): string {
 }
 
 /** Net SUI change (whole SUI) for the user, with gas added back, plus gas in SUI. */
-export function suiDeltaForUser(
-  tx: SuiTransactionBlockResponse,
-  user: string,
-): { sui: number; gas: number } {
+export function suiDeltaForUser(tx: SuiTx, user: string): { sui: number; gas: number } {
   const addr = normalizeSuiAddress(user);
   let mist = 0n;
   for (const bc of tx.balanceChanges ?? []) {
-    const owner = bc.owner;
-    const ownerAddr =
-      typeof owner === 'object' && owner !== null && 'AddressOwner' in owner
-        ? owner.AddressOwner
-        : null;
-    if (ownerAddr && normalizeSuiAddress(ownerAddr) === addr && isSuiCoin(bc.coinType)) {
+    if (bc.address && normalizeSuiAddress(bc.address) === addr && isSuiCoin(bc.coinType)) {
       mist += BigInt(bc.amount);
     }
   }
@@ -65,12 +68,9 @@ export function suiDeltaForUser(
   return { sui: Number(mist + gas) / 1e9, gas: Number(gas) / 1e9 };
 }
 
-export async function parseSuiTx(
-  tx: SuiTransactionBlockResponse,
-  user: string,
-): Promise<ParsedOrderPreview | null> {
+export async function parseSuiTx(tx: SuiTx, user: string): Promise<ParsedOrderPreview | null> {
   if (!user) return null;
-  if (tx.effects?.status?.status !== 'success') return null;
+  if (!tx.status.success) return null;
 
   const { sui, gas } = suiDeltaForUser(tx, user);
   if (Math.abs(sui) < 1e-6) return null;
@@ -108,11 +108,13 @@ export async function parseSuiDigest(
 ): Promise<ParsedOrderPreview | null> {
   const digest = extractSuiDigest(urlOrSig);
   if (!digest) throw new Error('Could not find a Sui digest in that input');
-  const tx = await suiClient(config).getTransactionBlock({
-    digest,
-    options: { showBalanceChanges: true, showEffects: true, showInput: true },
-  });
-  const sender = tx.transaction?.data?.sender;
+  const tx = unwrapTx(
+    await suiClient(config).core.getTransaction({
+      digest,
+      include: { ...TX_INCLUDE, transaction: true },
+    }),
+  );
+  const sender = tx.transaction?.sender;
   const ref = address || sender;
   if (!ref) return null;
   return parseSuiTx(tx, ref);
@@ -124,16 +126,16 @@ export async function scanSui(
   limit = 50,
 ): Promise<ParsedOrderPreview[]> {
   if (!user) throw new Error('Link your Sui wallet first');
-  const res = await suiClient(config).queryTransactionBlocks({
-    filter: { FromAddress: normalizeSuiAddress(user) },
-    options: { showBalanceChanges: true, showEffects: true },
+  const res = await suiClient(config).core.listTransactions({
+    filter: { sender: normalizeSuiAddress(user) },
+    include: TX_INCLUDE,
     limit,
     order: 'descending',
   });
 
   const out: ParsedOrderPreview[] = [];
-  for (const tx of res.data) {
-    const preview = await parseSuiTx(tx, user);
+  for (const result of res.transactions) {
+    const preview = await parseSuiTx(unwrapTx(result), user);
     if (preview) out.push(preview);
   }
   return out;
@@ -145,13 +147,19 @@ export async function scanSui(
 export async function getSuiAssetsByOwner(config: AppConfig, owner: string): Promise<OwnedAsset[]> {
   if (!owner) throw new Error('No wallet address provided');
   const client = getSuiClient(config);
-  const balances = await client.getAllBalances({ owner: normalizeSuiAddress(owner) });
+  const balances: SuiClientTypes.Balance[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = await client.core.listBalances({ owner: normalizeSuiAddress(owner), cursor });
+    balances.push(...page.balances);
+    cursor = page.hasNextPage ? page.cursor : null;
+  } while (cursor);
 
   const out: OwnedAsset[] = [];
   for (const b of balances) {
     let total: bigint;
     try {
-      total = BigInt(b.totalBalance);
+      total = BigInt(b.balance);
     } catch {
       total = 0n;
     }
@@ -160,14 +168,17 @@ export async function getSuiAssetsByOwner(config: AppConfig, owner: string): Pro
     const native = isSuiCoin(b.coinType);
     // Canonicalize the native coin so it matches the parser/ledger address.
     const address = native ? NATIVE_SUI_TYPE : b.coinType;
-    const meta = await client.getCoinMetadata({ coinType: b.coinType }).catch(() => null);
+    const meta = await client.core
+      .getCoinMetadata({ coinType: b.coinType })
+      .then((r) => r.coinMetadata)
+      .catch(() => null);
     const decimals = meta?.decimals ?? (native ? 9 : 0);
     out.push({
       chain: 'sui',
       address,
       symbol: meta?.symbol || (native ? 'SUI' : shortAddress(address)),
       name: meta?.name ?? (native ? 'Sui' : undefined),
-      image: meta?.iconUrl ?? undefined,
+      image: meta?.iconUrl || undefined, // gRPC returns "" (not null) when unset
       decimals,
       balance: Number(total) / 10 ** decimals,
       priceUsd: null,
@@ -180,14 +191,17 @@ export async function getSuiAssetsByOwner(config: AppConfig, owner: string): Pro
 export async function getSuiCoinMeta(config: AppConfig, coinType: string): Promise<TokenMeta | null> {
   const native = isSuiCoin(coinType);
   const address = native ? NATIVE_SUI_TYPE : coinType;
-  const meta = await getSuiClient(config).getCoinMetadata({ coinType }).catch(() => null);
+  const meta = await getSuiClient(config)
+    .core.getCoinMetadata({ coinType })
+    .then((r) => r.coinMetadata)
+    .catch(() => null);
   if (!meta && !native) return null;
   return {
     chain: 'sui',
     address,
     symbol: meta?.symbol || (native ? 'SUI' : shortAddress(address)),
     name: meta?.name ?? (native ? 'Sui' : undefined),
-    image: meta?.iconUrl ?? undefined,
+    image: meta?.iconUrl || undefined, // gRPC returns "" (not null) when unset
     decimals: meta?.decimals ?? (native ? 9 : 0),
   };
 }
@@ -200,8 +214,11 @@ export async function getSuiTokenBalance(
   decimals: number,
 ): Promise<number | null> {
   try {
-    const bal = await getSuiClient(config).getBalance({ owner: normalizeSuiAddress(owner), coinType });
-    return Number(BigInt(bal.totalBalance)) / 10 ** decimals;
+    const { balance } = await getSuiClient(config).core.getBalance({
+      owner: normalizeSuiAddress(owner),
+      coinType,
+    });
+    return Number(BigInt(balance.balance)) / 10 ** decimals;
   } catch {
     return null;
   }

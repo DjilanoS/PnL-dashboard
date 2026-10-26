@@ -25,8 +25,8 @@ export async function getSolBalance(config: AppConfig, address: string): Promise
 /** Live on-chain SUI balance (best-effort; null on failure). */
 export async function getSuiBalance(config: AppConfig, address: string): Promise<number | null> {
   try {
-    const bal = await getSuiClient(config).getBalance({ owner: address });
-    return Number(bal.totalBalance) / 1e9;
+    const { balance } = await getSuiClient(config).core.getBalance({ owner: address });
+    return Number(balance.balance) / 1e9;
   } catch {
     return null;
   }

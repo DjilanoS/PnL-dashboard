@@ -1,5 +1,4 @@
 import { Type, type Static } from '@sinclair/typebox';
-import { getJsonRpcFullnodeUrl } from '@mysten/sui/jsonRpc';
 
 /**
  * Environment schema. Defaults let the server boot in local dev without a
@@ -41,7 +40,8 @@ export const HELIUS_API_BASE = 'https://api-mainnet.helius-rpc.com/v0';
  * own RPC in Settings. Users bring their own (e.g. Helius) for better limits.
  */
 export const DEFAULT_SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
-export const DEFAULT_SUI_RPC = getJsonRpcFullnodeUrl('mainnet');
+// Public Sui mainnet fullnode — served over gRPC (JSON-RPC has been disabled there).
+export const DEFAULT_SUI_RPC = 'https://fullnode.mainnet.sui.io:443';
 
 /**
  * Build an effective config that applies a user's custom RPC overrides. When a
