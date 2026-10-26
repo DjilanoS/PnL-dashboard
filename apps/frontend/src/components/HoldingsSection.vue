@@ -8,8 +8,15 @@ import HoldingsTable from '@/components/HoldingsTable.vue';
 
 const props = defineProps<{ holdings: Holding[]; pnl: PnlSummary | null; points: NavPoint[] }>();
 
-// Remember the last-selected view (cards/table) across reloads.
-const view = useLocalStorage('pnl.holdings.view', 'cards');
+// Remember the last-selected view (cards/table) across reloads. Unknown stored
+// values fall back to cards so the section never renders with no tab active.
+type HoldingsView = 'cards' | 'table';
+const view = useLocalStorage<HoldingsView>('pnl.holdings.view', 'cards', {
+  serializer: {
+    read: (v) => (v === 'table' ? 'table' : 'cards'),
+    write: (v) => v,
+  },
+});
 
 // Per-asset value-over-time from the NAV breakdown (keyed by chain + symbol).
 function seriesFor(h: Holding): number[] {
