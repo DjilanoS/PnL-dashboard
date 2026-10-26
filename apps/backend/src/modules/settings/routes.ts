@@ -3,8 +3,12 @@ import { Type } from '@sinclair/typebox';
 import type { RpcSettings } from '@pnl/types';
 import { User, type UserDoc } from '../../models/User';
 import { DEFAULT_SOLANA_RPC, DEFAULT_SUI_RPC } from '../../config/env';
-import { assertPublicRpcUrl, pingRpc } from '../../services/rpcHealth';
+import { assertPublicRpcUrl, hasQueryString, pingRpc } from '../../services/rpcHealth';
 import { ChainSchema, ErrorSchema, RpcHealthResponseSchema, RpcSettingsSchema } from '../../schemas';
+
+// Shown to the user as-is (the Settings page toasts the error message).
+const SUI_QUERY_STRING_ERROR =
+  'Sui RPC URLs cannot contain a query string — put the API key in the path';
 
 /** Per-user RPC settings + a reachability probe. All routes require a valid JWT. */
 const settingsRoutes: FastifyPluginAsyncTypebox = async (app) => {
@@ -40,6 +44,9 @@ const settingsRoutes: FastifyPluginAsyncTypebox = async (app) => {
       if (trimmed && !(await assertPublicRpcUrl(trimmed, { allowUnresolvable: true }))) {
         return reply.code(400).send({ error: 'invalid_rpc_url' });
       }
+      if (chain === 'sui' && trimmed && hasQueryString(trimmed)) {
+        return reply.code(400).send({ error: SUI_QUERY_STRING_ERROR });
+      }
       const field = chain === 'sol' ? 'rpcSol' : 'rpcSui';
       const user = (await User.findByIdAndUpdate(
         req.user.sub,
@@ -63,6 +70,9 @@ const settingsRoutes: FastifyPluginAsyncTypebox = async (app) => {
       const { chain, url } = req.body;
       if (!(await assertPublicRpcUrl(url, { allowUnresolvable: true }))) {
         return reply.code(400).send({ error: 'invalid_rpc_url' });
+      }
+      if (chain === 'sui' && hasQueryString(url)) {
+        return reply.code(400).send({ error: SUI_QUERY_STRING_ERROR });
       }
       return pingRpc(chain, url);
     },

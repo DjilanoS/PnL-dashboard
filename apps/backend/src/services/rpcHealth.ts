@@ -96,6 +96,18 @@ export async function assertPublicRpcUrl(
 }
 
 /**
+ * gRPC-web builds requests as `${baseUrl}/${service}/${method}`, so a Sui RPC URL
+ * with a query string (e.g. `?api-key=…`) breaks every call. Keys must be in the path.
+ */
+export function hasQueryString(raw: string): boolean {
+  try {
+    return new URL(raw).search !== '';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * SSRF-guarded fetch for user-supplied RPC URLs: re-validates that the host
  * resolves to a public IP immediately before connecting, and refuses to follow
  * redirects (a 3xx becomes an opaqueredirect with `res.ok === false`), so a
@@ -121,10 +133,13 @@ export async function pingRpc(
   try {
     if (chain === 'sui') {
       // Sui fullnodes serve gRPC(-web), not JSON-RPC; probe via the same guarded fetch.
+      // getChainIdentifier only races its signal, so pass the abort to the fetch
+      // itself or a hung host keeps the socket open after the timeout.
       const client = new SuiGrpcClient({
         network: 'mainnet',
         baseUrl: url,
-        fetch: (input, init) => safeRpcFetch(String(input), init),
+        fetch: (input, init) =>
+          safeRpcFetch(String(input), { ...init, signal: controller.signal }),
       });
       await client.core.getChainIdentifier({ signal: controller.signal });
       return { ok: true, latencyMs: Date.now() - start };
