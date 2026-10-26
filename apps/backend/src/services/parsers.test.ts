@@ -1,13 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { SuiTransactionBlockResponse } from '@mysten/sui/jsonRpc';
 import {
   extractSolanaSignature,
   solDeltaForUser,
   userSwappedToken,
   type HeliusTx,
 } from './solanaParser';
-import { extractSuiDigest, suiDeltaForUser } from './suiParser';
+import { extractSuiDigest, suiDeltaForUser, type SuiTx } from './suiParser';
 
 const SOL_SIG =
   '5j7s6NiJS3JAkvgkoc18WVAsiSaci2pxB2A6ueCJP4tprA2TFg9wSyTLeYouxPBJEMzJinENTkpA52YStRW5Dia7';
@@ -120,16 +119,16 @@ test('suiDeltaForUser: sell adds gas back, negative SUI', () => {
   // Sold 10 SUI; balance change includes gas. gas = 1e6+2e6-5e5 = 2.5e6 MIST.
   const tx = {
     digest: SUI_DIGEST,
-    timestampMs: '1700000000000',
+    timestampMs: 1700000000000,
+    status: { success: true, error: null },
     balanceChanges: [
       {
-        owner: { AddressOwner: user },
+        address: user,
         coinType: '0x2::sui::SUI',
         amount: String(-10 * 1e9 - 2_500_000),
       },
     ],
     effects: {
-      status: { status: 'success' },
       gasUsed: {
         computationCost: '1000000',
         storageCost: '2000000',
@@ -137,7 +136,7 @@ test('suiDeltaForUser: sell adds gas back, negative SUI', () => {
         nonRefundableStorageFee: '0',
       },
     },
-  } as unknown as SuiTransactionBlockResponse;
+  } as unknown as SuiTx;
 
   const { sui, gas } = suiDeltaForUser(tx, user);
   assert.ok(Math.abs(sui + 10) < 1e-6, `expected ~-10, got ${sui}`);

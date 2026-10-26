@@ -60,7 +60,8 @@ async function remove(w: WalletDTO): Promise<void> {
           <Server class="size-4 text-muted-foreground" /> RPC endpoints
         </CardTitle>
         <CardDescription>
-          Use your own Solana &amp; Sui RPC for balances and transaction-link imports.
+          Use your own Solana &amp; Sui RPC for balances (and Solana transaction-link imports).
+          A Sui RPC must serve gRPC, with any API key in the path rather than a query string.
         </CardDescription>
       </CardHeader>
       <CardContent>

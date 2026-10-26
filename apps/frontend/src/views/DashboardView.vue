@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { Clock, LineChart, PieChart } from '@lucide/vue';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -19,7 +19,13 @@ const { loading: ordersLoading, loaded: ordersLoaded, fetchOrders } = useOrders(
 // First-load only: show skeletons until data lands, but never re-skeleton on the
 // 60s background refresh (loaded stays true once the first fetch succeeds).
 const portfolioPending = computed(() => portfolioLoading.value && !portfolioLoaded.value);
-const ordersPending = computed(() => ordersLoading.value && !ordersLoaded.value);
+// Only this view's own first orders fetch drives the skeleton. The orders-backed
+// children also call fetchOrders() on mount; if a failed load let their fetch
+// re-skeleton them, they'd unmount, remount and refetch in an endless loop.
+const ordersSettled = ref(false);
+const ordersPending = computed(
+  () => ordersLoading.value && !ordersLoaded.value && !ordersSettled.value,
+);
 
 const REFRESH_INTERVAL_MS = 60_000;
 let refreshTimer: ReturnType<typeof setInterval> | undefined;
@@ -28,7 +34,9 @@ onMounted(() => {
   fetchAll();
   // Drive the orders-backed sections' loading state from here, since those
   // components stay hidden behind skeletons until their data lands.
-  void fetchOrders();
+  void fetchOrders().finally(() => {
+    ordersSettled.value = true;
+  });
   refreshTimer = setInterval(fetchAll, REFRESH_INTERVAL_MS);
 });
 
