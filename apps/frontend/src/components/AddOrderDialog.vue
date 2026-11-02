@@ -620,7 +620,7 @@ async function importLink(): Promise<void> {
                 <span :class="c.side === 'buy' ? 'text-profit' : 'text-loss'" class="font-medium capitalize">{{ c.side }}</span>
                 {{ fmtNum(c.amount) }} {{ c.asset }}
               </span>
-              <span class="text-xs text-muted-foreground">{{ fmtUsd(c.priceUsd, 2) }}</span>
+              <span class="text-xs text-muted-foreground">{{ fmtUsd(c.amount * c.priceUsd, 2) }}</span>
             </button>
           </div>
           <p v-else-if="scanned && !tx.scanning.value" class="py-4 text-center text-sm text-muted-foreground">
