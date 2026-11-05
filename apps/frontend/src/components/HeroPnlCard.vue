@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { Share2 } from '@lucide/vue';
 import type { PnlRange } from '@pnl/types';
 import Beams from '@/components/Beams.vue';
+import SharePnlDialog from '@/components/SharePnlDialog.vue';
 import { cn } from '@/lib/utils';
 import { fmtPct, fmtSignedUsd } from '@/lib/format';
 import { usePortfolio } from '@/stores/usePortfolio';
@@ -55,21 +57,33 @@ const pillClass =
     <div class="relative">
       <div class="flex items-center justify-between gap-2">
         <span class="text-sm font-medium text-muted-foreground">PnL</span>
-        <div
-          class="z-10 flex items-center gap-0.5 rounded-full border border-border/70 bg-white/[0.06] p-0.5 backdrop-blur-sm"
-        >
-          <button
-            v-for="r in RANGES"
-            :key="r.value"
-            type="button"
-            :class="cn(
-              'rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
-              pnlRange === r.value ? 'bg-white/15 text-foreground' : 'text-muted-foreground hover:text-foreground',
-            )"
-            @click="setPnlRange(r.value)"
+        <div class="z-10 flex items-center gap-2">
+          <SharePnlDialog>
+            <button
+              type="button"
+              aria-label="Share PnL image"
+              title="Share PnL image"
+              class="flex size-7 items-center justify-center rounded-full border border-border/70 bg-white/[0.06] text-muted-foreground backdrop-blur-sm transition-colors hover:text-foreground"
+            >
+              <Share2 class="size-3.5" />
+            </button>
+          </SharePnlDialog>
+          <div
+            class="flex items-center gap-0.5 rounded-full border border-border/70 bg-white/[0.06] p-0.5 backdrop-blur-sm"
           >
-            {{ r.label }}
-          </button>
+            <button
+              v-for="r in RANGES"
+              :key="r.value"
+              type="button"
+              :class="cn(
+                'rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
+                pnlRange === r.value ? 'bg-white/15 text-foreground' : 'text-muted-foreground hover:text-foreground',
+              )"
+              @click="setPnlRange(r.value)"
+            >
+              {{ r.label }}
+            </button>
+          </div>
         </div>
       </div>
       <div :class="cn('mt-1 text-3xl font-bold tracking-tight tabular-nums sm:text-4xl', headlineTone)">
